@@ -1,0 +1,73 @@
+paths:
+  contexts_dir: selected-contexts
+  train_file: train.json
+  public_file: public-official.json
+  artifacts_dir: artifacts
+  submission_file: submission.json
+
+runtime:
+  seed: 2026
+  device: cuda
+  dtype: float16
+  batch_size: 16
+  num_workers: 2
+
+models:
+  vietlegal_e5:
+    id: mainguyen9/vietlegal-e5
+    role: dense
+    license: Apache-2.0
+    prompt_query: "query: "
+    prompt_document: "passage: "
+    chunk_view: short
+  vietnamese_embedding:
+    id: AITeamVN/Vietnamese_Embedding_v2
+    role: dense
+    license: Apache-2.0
+    prompt_query: ""
+    prompt_document: ""
+    chunk_view: long
+  nemotron:
+    id: nvidia/Nemotron-3-Embed-1B-BF16
+    role: dense
+    license: OpenMDW-1.1
+    prompt_query: "query: "
+    prompt_document: "passage: "
+    chunk_view: long
+  jina:
+    id: jinaai/jina-reranker-v3.5
+    role: listwise_reranker
+    license: CC-BY-NC-4.0
+  vietnamese_reranker:
+    id: AITeamVN/Vietnamese_Reranker
+    role: pairwise_reranker
+    license: Apache-2.0
+
+chunking:
+  short_tokens: 384
+  short_overlap: 64
+  long_tokens: 1024
+  long_overlap: 128
+
+retrieval:
+  per_channel_top_k: 100
+  chunk_search_k: 600
+  fused_top_k: 120
+  query_memory_neighbors: 30
+  doc_second_chunk_weight: 0.1
+  rrf_k_values: [20, 40, 60, 100]
+  first_stage_weight_values: [0.5, 1.0, 1.5, 2.0]
+
+reranking:
+  pairwise_max_length: 1536
+  pairwise_batch_size: 8
+  jina_window_size: 20
+  jina_evidence_tokens: 384
+  jina_final_top_k: 30
+  final_rrf_k_values: [20, 40, 60]
+  final_reranker_weight_values: [0.75, 1.0, 1.25, 1.5]
+  final_first_stage_weight_values: [0.15, 0.2, 0.25]
+
+validation:
+  folds: 5
+  reranker_validation_fold: 0

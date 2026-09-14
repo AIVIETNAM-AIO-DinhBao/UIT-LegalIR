@@ -1,0 +1,9 @@
+faiss-cpu>=1.8.0
+numpy>=1.26
+PyYAML>=6.0
+scikit-learn>=1.4
+sentence-transformers>=5.4.1
+transformers>=5.2.0
+torch>=2.4
+tqdm>=4.66
+

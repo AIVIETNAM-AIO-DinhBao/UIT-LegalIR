@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+from itertools import product
+from pathlib import Path
+from typing import Any
+
+from .embeddings import audit_models, build_dense_index, build_question_embeddings
+from .fusion import coordinate_search, rrf
+from .lexical import LexicalIndex
+from .prepare import build_corpus
+from .rerank import final_predictions, rerank_candidates
+from .retrieval import RetrievalPipeline
+from .storage import read_json, read_jsonl, write_json
+from .validation import grouped_folds, oracle_recall, score_predictions, validate_submission_shape
+
+
+def prepare(config: dict[str, Any], resume: bool) -> dict[str, int]:
+    return build_corpus(config, resume)
+
+
+def index(config: dict[str, Any], resume: bool, model_name: str | None = None, lexical_only: bool = False) -> None:
+    artifacts = Path(config["paths"]["artifacts_dir"])
+    lexical_path = artifacts / "lexical_short.pkl"
+    if not (resume and lexical_path.exists()) and model_name is None:
+        chunks = list(read_jsonl(artifacts / "chunks_short.jsonl"))
+        LexicalIndex.build([chunk["text"] for chunk in chunks]).save(lexical_path)
+    if lexical_only:
+        if lexical_path.exists():
+            return
+        chunks = list(read_jsonl(artifacts / "chunks_short.jsonl"))
+        LexicalIndex.build([chunk["text"] for chunk in chunks]).save(lexical_path)
+        return
+    selected = {model_name} if model_name else None
+    for candidate_name, spec in config["models"].items():
+        if spec["role"] == "dense":
+            if selected is not None and candidate_name not in selected:
+                continue
+            build_dense_index(config, candidate_name, resume)
+            build_question_embeddings(config, candidate_name, resume)
+
+
+def _load_questions(config: dict[str, Any], split: str) -> list[dict[str, Any]]:
+    filename = "train_questions.jsonl" if split == "train" else "public_questions.jsonl"
+    return list(read_jsonl(Path(config["paths"]["artifacts_dir"]) / filename))
+
+
+def _train_allowed_questions(questions: list[dict[str, Any]], folds: int) -> dict[str, set[str]]:
+    assignment = grouped_folds(questions, folds)
+    all_qids = {item["qid"] for item in questions}
+    return {qid: {other for other in all_qids if assignment[other] != assignment[qid]} for qid in all_qids}
+
+
+def build_retrieval_cache(config: dict[str, Any], split: str, resume: bool) -> dict[str, dict[str, Any]]:
+    artifacts = Path(config["paths"]["artifacts_dir"])
+    cache = artifacts / f"retrieval_{split}.json"
+    if resume and cache.exists():
+        return read_json(cache)
+    questions = _load_questions(config, split)
+    allowed = _train_allowed_questions(questions, config["validation"]["folds"]) if split == "train" else None
+    pipeline = RetrievalPipeline(config)
+    result = pipeline.retrieve_many(questions, allowed)
+    write_json(cache, result)
+    return result
+
+
+def tune_first_stage(config: dict[str, Any], resume: bool) -> dict[str, Any]:
+    artifacts = Path(config["paths"]["artifacts_dir"])
+    destination = artifacts / "first_stage_weights.json"
+    if resume and destination.exists():
+        return read_json(destination)
+    questions = _load_questions(config, "train")
+    retrievals = build_retrieval_cache(config, "train", resume)
+    channel_rankings = {
+        channel: {qid: retrievals[qid]["channels"][channel] for qid in retrievals}
+        for channel in next(iter(retrievals.values()))["channels"]
+    }
+    options = config["retrieval"]
+    best = coordinate_search(
+        channel_rankings,
+        questions,
+        options["rrf_k_values"],
+        options["first_stage_weight_values"],
+        options["fused_top_k"],
+    )
+    fused = _fuse_cached(config, retrievals, best["weights"], best["rrf_k"])
+    candidates = {qid: value["candidates"] for qid, value in fused.items()}
+    best["oracle_recall_at_fused_top_k"] = oracle_recall(candidates, questions)
+    write_json(destination, best)
+    write_json(artifacts / "fused_train.json", fused)
+    return best
+
+
+def _fuse_cached(config: dict[str, Any], retrievals: dict[str, dict[str, Any]], weights: dict[str, float], rrf_k: int) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for qid, retrieval in retrievals.items():
+        candidates = rrf(retrieval["channels"], weights, rrf_k, config["retrieval"]["fused_top_k"])
+        evidence: dict[str, list[str]] = {document_id: [] for document_id in candidates}
+        for per_document in retrieval["evidence"].values():
+            for document_id in candidates:
+                evidence[document_id].extend(per_document.get(document_id, []))
+        result[qid] = {
+            "candidates": candidates,
+            "evidence": {document_id: list(dict.fromkeys(chunk_ids))[:2] for document_id, chunk_ids in evidence.items()},
+        }
+    return result
+
+
+def run_reranking(
+    config: dict[str, Any], split: str, fold: int | None, resume: bool, engine: str | None = None
+) -> dict[str, dict[str, list[str]]]:
+    artifacts = Path(config["paths"]["artifacts_dir"])
+    suffix = f"_{fold}" if fold is not None else ""
+    destination = artifacts / f"rerank_{split}{suffix}.json"
+    if resume and destination.exists():
+        return read_json(destination)
+    first_stage = read_json(artifacts / "first_stage_weights.json")
+    retrievals = build_retrieval_cache(config, split, resume)
+    fused = _fuse_cached(config, retrievals, first_stage["weights"], first_stage["rrf_k"])
+    questions = _load_questions(config, split)
+    if fold is not None:
+        assignments = grouped_folds(_load_questions(config, "train"), config["validation"]["folds"])
+        questions = [item for item in questions if assignments[item["qid"]] == fold]
+        fused = {item["qid"]: fused[item["qid"]] for item in questions}
+    engines = [engine] if engine else ["vietnamese_reranker", "jina"]
+    if engine is None:
+        existing = {
+            name: read_json(artifacts / f"rerank_{split}{suffix}_{name}.json")[name]
+            for name in ("vietnamese_reranker", "jina")
+            if (artifacts / f"rerank_{split}{suffix}_{name}.json").exists()
+        }
+        if len(existing) == 2:
+            write_json(destination, existing)
+            return existing
+    result = rerank_candidates(config, questions, fused, engines=engines)
+    for name, rankings in result.items():
+        write_json(artifacts / f"rerank_{split}{suffix}_{name}.json", {name: rankings})
+    if engine is not None:
+        return result
+    write_json(destination, result)
+    return result
+
+
+def tune_final_stage(config: dict[str, Any], fold: int, resume: bool) -> dict[str, Any]:
+    artifacts = Path(config["paths"]["artifacts_dir"])
+    destination = artifacts / f"final_weights_fold{fold}.json"
+    if resume and destination.exists():
+        return read_json(destination)
+    first_stage = read_json(artifacts / "first_stage_weights.json")
+    retrievals = build_retrieval_cache(config, "train", resume)
+    fused = _fuse_cached(config, retrievals, first_stage["weights"], first_stage["rrf_k"])
+    all_questions = _load_questions(config, "train")
+    assignments = grouped_folds(all_questions, config["validation"]["folds"])
+    questions = [item for item in all_questions if assignments[item["qid"]] == fold]
+    rerankings = run_reranking(config, "train", fold, resume)
+    options = config["reranking"]
+    best: dict[str, Any] | None = None
+    for jina_weight, vi_weight, first_weight, rrf_k in product(
+        options["final_reranker_weight_values"],
+        options["final_reranker_weight_values"],
+        options["final_first_stage_weight_values"],
+        options["final_rrf_k_values"],
+    ):
+        weights = {"jina": jina_weight, "vietnamese_reranker": vi_weight, "first_stage": first_weight}
+        predictions = final_predictions(
+            {item["qid"]: fused[item["qid"]]["candidates"] for item in questions}, rerankings, weights, rrf_k
+        )
+        candidate = {"weights": weights, "rrf_k": rrf_k, "metrics": score_predictions(predictions, questions)}
+        if best is None or (candidate["metrics"]["recall"], candidate["metrics"]["precision"]) > (best["metrics"]["recall"], best["metrics"]["precision"]):
+            best = candidate
+    assert best is not None
+    write_json(destination, best)
+    write_json(artifacts / "final_weights.json", best)
+    return best
+
+
+def predict(config: dict[str, Any], resume: bool, output: str | None = None) -> Path:
+    artifacts = Path(config["paths"]["artifacts_dir"])
+    first_stage = read_json(artifacts / "first_stage_weights.json")
+    final_stage = read_json(artifacts / "final_weights.json")
+    retrievals = build_retrieval_cache(config, "public", resume)
+    fused = _fuse_cached(config, retrievals, first_stage["weights"], first_stage["rrf_k"])
+    write_json(artifacts / "fused_public.json", fused)
+    questions = _load_questions(config, "public")
+    rerankings = run_reranking(config, "public", None, resume)
+    predictions = final_predictions(
+        {qid: value["candidates"] for qid, value in fused.items()}, rerankings, final_stage["weights"], final_stage["rrf_k"]
+    )
+    corpus_ids = {row["doc_id"] for row in read_jsonl(artifacts / "corpus.jsonl")}
+    submission = {qid: {"answer": answer} for qid, answer in predictions.items()}
+    validate_submission_shape(submission, questions, corpus_ids)
+    destination = Path(output or config["paths"]["submission_file"])
+    write_json(destination, submission)
+    return destination
+
+
+__all__ = ["audit_models", "build_retrieval_cache", "index", "predict", "prepare", "run_reranking", "tune_final_stage", "tune_first_stage"]

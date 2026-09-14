@@ -1,2 +1,7 @@
 selected-contexts/*
 *:Zone.Identifier
+artifacts/
+submission.json
+submission.zip
+__pycache__/
+.pytest_cache/
