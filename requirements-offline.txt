@@ -1,0 +1,31 @@
+# Do not add torch here: Kaggle's RTX image supplies the CUDA-compatible build.
+# The online bundle builder downloads wheels for these packages and their complete
+# transitive dependency closure for use by the offline notebook.
+faiss-cpu>=1.8.0
+numpy>=1.26
+PyYAML>=6.0
+scikit-learn>=1.4
+scipy>=1.10
+sentence-transformers>=5.4.1,<6
+transformers>=5.10.0,<6
+huggingface-hub>=0.23.0
+safetensors>=0.4.0
+tokenizers>=0.21.0
+tqdm>=4.66
+filelock>=3.16
+fsspec>=2024.6
+packaging>=24.0
+requests>=2.32
+regex>=2024.11
+typing-extensions>=4.12
+certifi>=2024.8
+charset-normalizer>=3.4
+idna>=3.10
+urllib3>=2.2
+joblib>=1.4
+threadpoolctl>=3.5
+jinja2>=3.1
+MarkupSafe>=2.1
+networkx>=3.3
+sympy>=1.13
+mpmath>=1.3

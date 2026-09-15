@@ -9,6 +9,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
+from .models import model_load_kwargs, model_source
 from .storage import ensure_dir, read_jsonl, write_json
 
 
@@ -29,7 +30,8 @@ def load_encoder(model_spec: dict[str, Any], runtime: dict[str, Any]) -> Sentenc
             "dtype": _torch_dtype(runtime["dtype"]),
             "attn_implementation": "sdpa",
         }
-    return SentenceTransformer(model_spec["id"], **kwargs)
+    kwargs.update(model_load_kwargs(model_spec))
+    return SentenceTransformer(model_source(model_spec), **kwargs)
 
 
 def encode_texts(
@@ -113,14 +115,19 @@ def audit_models(config: dict[str, Any]) -> dict[str, Any]:
     total = 0
     for name, spec in config["models"].items():
         loader = AutoModelForSequenceClassification if spec["role"] == "pairwise_reranker" else AutoModel
-        model = loader.from_pretrained(spec["id"], trust_remote_code=name == "jina", torch_dtype=torch.float16)
+        model = loader.from_pretrained(
+            model_source(spec),
+            trust_remote_code=name == "jina",
+            dtype=torch.float16,
+            **model_load_kwargs(spec),
+        )
         count = sum(parameter.numel() for parameter in model.parameters())
         rows.append(
             {
                 "name": name,
                 "id": spec["id"],
                 "parameters": count,
-                "revision": getattr(model.config, "_commit_hash", None),
+                "revision": spec.get("revision") or getattr(model.config, "_commit_hash", None),
                 "license": spec.get("license", "not-recorded"),
             }
         )

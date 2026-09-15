@@ -5,3 +5,5 @@ submission.json
 submission.zip
 __pycache__/
 .pytest_cache/
+build/
+*.egg-info/

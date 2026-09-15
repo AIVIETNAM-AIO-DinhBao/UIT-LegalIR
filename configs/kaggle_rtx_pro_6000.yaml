@@ -8,14 +8,16 @@ paths:
 runtime:
   seed: 2026
   device: cuda
-  dtype: float16
-  batch_size: 16
-  num_workers: 2
+  dtype: bfloat16
+  batch_size: 64
+  num_workers: 4
 
 models:
   vietlegal_e5:
     id: mainguyen9/vietlegal-e5
     revision: a814728d93e14566f9634b50a054e67699ea8818
+    local_path: null
+    local_files_only: true
     role: dense
     license: Apache-2.0
     prompt_query: "query: "
@@ -24,6 +26,8 @@ models:
   vietnamese_embedding:
     id: AITeamVN/Vietnamese_Embedding_v2
     revision: 18b44161e041bf1d3a333ab5144b5b7b93f914d2
+    local_path: null
+    local_files_only: true
     role: dense
     license: Apache-2.0
     prompt_query: ""
@@ -32,6 +36,8 @@ models:
   nemotron:
     id: nvidia/Nemotron-3-Embed-1B-BF16
     revision: c0c9fea93ea424587517f2c59e20db9f1d6bf615
+    local_path: null
+    local_files_only: true
     role: dense
     license: OpenMDW-1.1
     prompt_query: "query: "
@@ -40,11 +46,15 @@ models:
   jina:
     id: jinaai/jina-reranker-v3.5
     revision: e8a93f33f0b22108f8c2364f8484ce3422552fbc
+    local_path: null
+    local_files_only: true
     role: listwise_reranker
     license: CC-BY-NC-4.0
   vietnamese_reranker:
     id: AITeamVN/Vietnamese_Reranker
     revision: f536976248403314225d7fdfdbc87f0e9516a54e
+    local_path: null
+    local_files_only: true
     role: pairwise_reranker
     license: Apache-2.0
 
@@ -65,7 +75,7 @@ retrieval:
 
 reranking:
   pairwise_max_length: 1536
-  pairwise_batch_size: 8
+  pairwise_batch_size: 32
   jina_window_size: 20
   jina_evidence_tokens: 384
   jina_final_top_k: 30

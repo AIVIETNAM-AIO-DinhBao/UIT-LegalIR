@@ -30,3 +30,13 @@ The first `audit` writes `artifacts/model_manifest.json` and blocks a submission
 - `predict`: generate a schema-checked `submission.json` with exactly five unique IDs per question.
 
 The task specification ranks by Recall and uses Precision as a tiebreaker; the local pipeline mirrors the scorer's per-question constraints.
+
+## RTX Pro 6000 with Internet disabled
+
+Use the two-notebook workflow under `kaggle/` when the RTX Pro 6000 runtime requires Internet to be disabled:
+
+1. Run `build_offline_bundle.ipynb` with Internet enabled. It pins and snapshots every model, excludes unused ONNX files, builds the project wheel, downloads the non-Torch dependency wheelhouse, writes checksums, and smoke-tests all models after enabling Hugging Face offline mode.
+2. Save its `legalir-offline-bundle/` output as a Kaggle Dataset.
+3. Attach that bundle and the competition-data dataset to `legalir_rtx_pro_6000_offline.ipynb`, select RTX Pro 6000, and set Internet to **Off**.
+
+The offline notebook loads the model snapshots by local path, sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` before importing Hugging Face libraries, and installs only from the attached wheelhouse with `--no-index`. It intentionally retains Kaggle's installed CUDA-compatible PyTorch build instead of installing a PyPI Torch wheel.

@@ -9,6 +9,7 @@ import torch
 from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 
 from .fusion import rrf
+from .models import model_load_kwargs, model_source
 from .storage import read_jsonl
 from .text import tokenize_words
 
@@ -37,9 +38,13 @@ class VietnamesePairwiseReranker:
         self.config = config
         spec = config["models"]["vietnamese_reranker"]
         self.device = _device(config["runtime"])
-        self.tokenizer = AutoTokenizer.from_pretrained(spec["id"])
+        source = model_source(spec)
+        load_kwargs = model_load_kwargs(spec)
+        self.tokenizer = AutoTokenizer.from_pretrained(source, **load_kwargs)
         self.model = AutoModelForSequenceClassification.from_pretrained(
-            spec["id"], torch_dtype=torch.float16 if self.device.startswith("cuda") else torch.float32
+            source,
+            dtype=torch.float16 if self.device.startswith("cuda") else torch.float32,
+            **load_kwargs,
         ).to(self.device).eval()
 
     @torch.inference_mode()
@@ -65,12 +70,19 @@ class JinaListwiseReranker:
         self.config = config
         spec = config["models"]["jina"]
         self.device = _device(config["runtime"])
+        source = model_source(spec)
+        load_kwargs = model_load_kwargs(spec)
+        tokenizer = AutoTokenizer.from_pretrained(source, **load_kwargs)
         self.model = AutoModel.from_pretrained(
-            spec["id"],
+            source,
             trust_remote_code=True,
-            torch_dtype=torch.float16 if self.device.startswith("cuda") else torch.float32,
+            dtype=torch.float16 if self.device.startswith("cuda") else torch.float32,
             attn_implementation="sdpa",
+            **load_kwargs,
         ).to(self.device).eval()
+        # Jina's custom rerank() lazily initializes a tokenizer. Supplying the
+        # already-local tokenizer prevents that step from resolving a Hub ID.
+        self.model._tokenizer = tokenizer
 
     @torch.inference_mode()
     def rank(self, query: str, documents: list[str]) -> list[int]:
