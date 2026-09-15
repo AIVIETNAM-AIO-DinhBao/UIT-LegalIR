@@ -21,11 +21,15 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertIn("JinaListwiseReranker", source)
         self.assertIn("pip', 'wheel'", source)
         self.assertIn("'--no-deps'", source)
-        self.assertIn("'hf-xet'", source)
+        self.assertNotIn("'install', '--upgrade'", source)
         self.assertNotIn("'pip', 'check'", source)
 
-        requirements = (ROOT / "requirements-offline.txt").read_text(encoding="utf-8")
-        self.assertIn("hf-xet>=1.1.3,<2.0.0", requirements)
+        requirements = [
+            line
+            for line in (ROOT / "requirements-offline.txt").read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        ]
+        self.assertEqual(requirements, ["faiss-cpu>=1.8.0", "sentence-transformers>=5.4.1,<6"])
 
     def test_rtx_notebook_has_no_network_install_or_clone(self):
         source = code_source(ROOT / "kaggle" / "legalir_rtx_pro_6000_offline.ipynb")
@@ -33,6 +37,7 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertIn("TRANSFORMERS_OFFLINE'] = '1'", source)
         self.assertIn("'--no-index'", source)
         self.assertIn("'--no-deps'", source)
+        self.assertNotIn("'--upgrade'", source)
         self.assertIn("selected-contexts' / 'selected-contexts'", source)
         self.assertIn("for model in ('vietlegal_e5', 'vietnamese_embedding', 'nemotron')", source)
         self.assertNotIn("git clone", source)
