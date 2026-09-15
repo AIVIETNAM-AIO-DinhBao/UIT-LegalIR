@@ -12,16 +12,17 @@ def code_source(notebook: Path) -> str:
 
 
 class OfflineNotebookTests(unittest.TestCase):
-    def test_builder_pins_snapshots_and_runs_offline_smoke_tests(self):
+    def test_builder_pins_snapshots_without_mutating_kaggle_runtime(self):
         source = code_source(ROOT / "kaggle" / "build_offline_bundle.ipynb")
         self.assertIn("snapshot_download(", source)
         self.assertIn("revision=spec['revision']", source)
         self.assertIn("ignore_patterns=['onnx/*', '*.onnx', '*.onnx_data']", source)
-        self.assertIn("HF_HUB_OFFLINE'] = '1'", source)
-        self.assertIn("JinaListwiseReranker", source)
+        self.assertIn("'pip', 'download'", source)
         self.assertIn("pip', 'wheel'", source)
         self.assertIn("'--no-deps'", source)
-        self.assertNotIn("'install', '--upgrade'", source)
+        self.assertNotIn("'pip', 'install'", source)
+        self.assertNotIn("from sentence_transformers", source)
+        self.assertNotIn("import torch", source)
         self.assertNotIn("'pip', 'check'", source)
 
         requirements = [
