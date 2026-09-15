@@ -30,14 +30,23 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
     long_path = artifacts / "chunks_long.jsonl"
     train_path = artifacts / "train_questions.jsonl"
     public_path = artifacts / "public_questions.jsonl"
-    if resume and all(path.exists() for path in (corpus_path, short_path, long_path, train_path, public_path)):
-        return read_json(artifacts / "prepare_manifest.json")
+    manifest_path = artifacts / "prepare_manifest.json"
+    if resume and all(path.exists() for path in (corpus_path, short_path, long_path, train_path, public_path, manifest_path)):
+        manifest = read_json(manifest_path)
+        if manifest.get("documents", 0) > 0 and manifest.get("short_chunks", 0) > 0 and manifest.get("long_chunks", 0) > 0:
+            return manifest
 
+    contexts_dir = Path(paths["contexts_dir"])
     context_files = sorted(
         path
-        for path in Path(paths["contexts_dir"]).glob("context_*.json")
+        for path in contexts_dir.glob("context_*.json")
         if not path.name.endswith(".Zone.Identifier")
     )
+    if not context_files:
+        raise FileNotFoundError(
+            f"No legal context files matching 'context_*.json' were found in {contexts_dir.resolve()}. "
+            "Set paths.contexts_dir to the directory that directly contains the context files."
+        )
     short_rows: list[dict[str, Any]] = []
     long_rows: list[dict[str, Any]] = []
     corpus_rows: list[dict[str, Any]] = []
@@ -74,6 +83,6 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
         "train_questions": len(load_questions(paths["train_file"])),
         "public_questions": len(load_questions(paths["public_file"])),
     }
-    write_json(artifacts / "prepare_manifest.json", manifest)
+    write_json(manifest_path, manifest)
     return manifest
 

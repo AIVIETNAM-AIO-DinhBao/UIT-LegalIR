@@ -21,14 +21,19 @@ def prepare(config: dict[str, Any], resume: bool) -> dict[str, int]:
 def index(config: dict[str, Any], resume: bool, model_name: str | None = None, lexical_only: bool = False) -> None:
     artifacts = Path(config["paths"]["artifacts_dir"])
     lexical_path = artifacts / "lexical_short.pkl"
-    if not (resume and lexical_path.exists()) and model_name is None:
-        chunks = list(read_jsonl(artifacts / "chunks_short.jsonl"))
+
+    def build_lexical_index() -> None:
+        chunks_path = artifacts / "chunks_short.jsonl"
+        if not chunks_path.exists():
+            raise FileNotFoundError(f"Missing {chunks_path}. Run the prepare command before indexing.")
+        chunks = list(read_jsonl(chunks_path))
+        if not chunks:
+            raise ValueError(f"{chunks_path} contains no chunks. Re-run prepare with a non-empty contexts_dir.")
         LexicalIndex.build([chunk["text"] for chunk in chunks]).save(lexical_path)
+
+    if (model_name is None or lexical_only) and not (resume and lexical_path.exists()):
+        build_lexical_index()
     if lexical_only:
-        if lexical_path.exists():
-            return
-        chunks = list(read_jsonl(artifacts / "chunks_short.jsonl"))
-        LexicalIndex.build([chunk["text"] for chunk in chunks]).save(lexical_path)
         return
     selected = {model_name} if model_name else None
     for candidate_name, spec in config["models"].items():
