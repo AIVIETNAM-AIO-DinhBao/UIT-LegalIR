@@ -30,7 +30,10 @@ class OfflineNotebookTests(unittest.TestCase):
             for line in (ROOT / "requirements-offline.txt").read_text(encoding="utf-8").splitlines()
             if line and not line.startswith("#")
         ]
-        self.assertEqual(requirements, ["faiss-cpu>=1.8.0", "sentence-transformers>=5.4.1,<6"])
+        self.assertEqual(
+            requirements,
+            ["faiss-cpu>=1.8.0", "sentence-transformers>=5.4.1,<6", "tokenizers>=0.23.1,<0.24"],
+        )
 
     def test_rtx_notebook_has_no_network_install_or_clone(self):
         source = code_source(ROOT / "kaggle" / "legalir_rtx_pro_6000_offline.ipynb")
