@@ -37,6 +37,7 @@ class OfflineNotebookTests(unittest.TestCase):
                 "sentence-transformers==5.7.0",
                 "transformers==5.17.0",
                 "tokenizers==0.23.2",
+                "safetensors==0.8.0",
             ],
         )
 
@@ -47,6 +48,9 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertIn("'--no-index'", source)
         self.assertIn("'--no-deps'", source)
         self.assertNotIn("'--upgrade'", source)
+        self.assertIn("'-m', 'venv', '--system-site-packages'", source)
+        self.assertIn("base = [VENV_PYTHON, '-m', 'legalir']", source)
+        self.assertIn("run(VENV_PYTHON, preflight_path", source)
         self.assertIn("Pinned NLP runtime:", source)
         self.assertIn("selected-contexts' / 'selected-contexts'", source)
         self.assertIn("for model in ('vietlegal_e5', 'vietnamese_embedding', 'nemotron')", source)

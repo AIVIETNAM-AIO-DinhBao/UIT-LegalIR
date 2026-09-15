@@ -2,8 +2,9 @@
 # SciPy, scikit-learn, PyYAML, and their dependencies as a tested stack. Do not
 # replace those compiled packages or the CUDA-enabled torch build.
 faiss-cpu>=1.8.0
-# Transformers and tokenizers perform strict mutual version checks. Pin the
-# lightweight NLP trio together instead of relying on a changing Kaggle pair.
+# Transformers performs strict checks across its lightweight runtime packages.
+# Pin the set together instead of relying on Kaggle's changing global versions.
 sentence-transformers==5.7.0
 transformers==5.17.0
 tokenizers==0.23.2
+safetensors==0.8.0
