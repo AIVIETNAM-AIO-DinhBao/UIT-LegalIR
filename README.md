@@ -40,3 +40,5 @@ Use the two-notebook workflow under `kaggle/` when the RTX Pro 6000 runtime requ
 3. Attach that bundle and the competition-data dataset to `legalir_rtx_pro_6000_offline.ipynb`, select RTX Pro 6000, and set Internet to **Off**.
 
 The offline notebook loads the model snapshots by local path, sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` before importing Hugging Face libraries, and installs only from the attached wheelhouse with `--no-index`. It intentionally retains Kaggle's installed CUDA-compatible PyTorch build instead of installing a PyPI Torch wheel.
+
+The notebooks intentionally do not run global `pip check`: Kaggle's base image contains unrelated packages with optional version constraints that can conflict with each other. The offline local-model preflight is the relevant validation because it imports the actual LegalIR stack and runs every model with Hub access disabled.

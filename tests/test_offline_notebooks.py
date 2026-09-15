@@ -21,6 +21,7 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertIn("JinaListwiseReranker", source)
         self.assertIn("pip', 'wheel'", source)
         self.assertIn("'--no-deps'", source)
+        self.assertNotIn("'pip', 'check'", source)
 
     def test_rtx_notebook_has_no_network_install_or_clone(self):
         source = code_source(ROOT / "kaggle" / "legalir_rtx_pro_6000_offline.ipynb")
@@ -33,6 +34,7 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertNotIn("git clone", source)
         self.assertNotIn("huggingface.co", source)
         self.assertNotIn("CUDA_VISIBLE_DEVICES': '1'", source)
+        self.assertNotIn("'pip', 'check'", source)
 
 
 if __name__ == "__main__":
