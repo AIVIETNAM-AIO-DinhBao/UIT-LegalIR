@@ -21,7 +21,11 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertIn("JinaListwiseReranker", source)
         self.assertIn("pip', 'wheel'", source)
         self.assertIn("'--no-deps'", source)
+        self.assertIn("'hf-xet'", source)
         self.assertNotIn("'pip', 'check'", source)
+
+        requirements = (ROOT / "requirements-offline.txt").read_text(encoding="utf-8")
+        self.assertIn("hf-xet>=1.1.3,<2.0.0", requirements)
 
     def test_rtx_notebook_has_no_network_install_or_clone(self):
         source = code_source(ROOT / "kaggle" / "legalir_rtx_pro_6000_offline.ipynb")
