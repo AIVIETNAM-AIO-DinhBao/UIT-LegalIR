@@ -32,7 +32,12 @@ class OfflineNotebookTests(unittest.TestCase):
         ]
         self.assertEqual(
             requirements,
-            ["faiss-cpu>=1.8.0", "sentence-transformers>=5.4.1,<6", "tokenizers>=0.23.1,<0.24"],
+            [
+                "faiss-cpu>=1.8.0",
+                "sentence-transformers==5.7.0",
+                "transformers==5.17.0",
+                "tokenizers==0.23.2",
+            ],
         )
 
     def test_rtx_notebook_has_no_network_install_or_clone(self):
@@ -42,6 +47,7 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertIn("'--no-index'", source)
         self.assertIn("'--no-deps'", source)
         self.assertNotIn("'--upgrade'", source)
+        self.assertIn("Pinned NLP runtime:", source)
         self.assertIn("selected-contexts' / 'selected-contexts'", source)
         self.assertIn("for model in ('vietlegal_e5', 'vietnamese_embedding', 'nemotron')", source)
         self.assertNotIn("git clone", source)
