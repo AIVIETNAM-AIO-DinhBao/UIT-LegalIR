@@ -12,6 +12,7 @@ from .embeddings import encode_texts, load_encoder
 from .fusion import rrf
 from .lexical import LexicalIndex
 from .storage import read_json, read_jsonl
+from .text import normalize_question
 
 
 class RetrievalPipeline:
@@ -23,6 +24,9 @@ class RetrievalPipeline:
         self.dense: dict[str, tuple[Any, list[dict[str, Any]]]] = {}
         self.question_vectors: dict[str, np.ndarray] = {}
         self.train_questions = list(read_jsonl(self.artifacts / "train_questions.jsonl"))
+        self.train_by_normalized_question: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+        for item in self.train_questions:
+            self.train_by_normalized_question[normalize_question(item["question"])].append(item)
 
     def _dense_index(self, model_name: str) -> tuple[Any, list[dict[str, Any]]]:
         if model_name not in self.dense:
@@ -117,9 +121,13 @@ class RetrievalPipeline:
             output[item["qid"]]["channels"].update(lexical)
             output[item["qid"]]["evidence"].update(lexical_evidence)
 
-        memory_channels: dict[str, dict[str, list[str]]] = {
-            item["qid"]: {} for item in questions
+        memory_scores: dict[str, defaultdict[str, float]] = {
+            item["qid"]: defaultdict(float) for item in questions
         }
+        memory_models: dict[str, defaultdict[str, set[str]]] = {
+            item["qid"]: defaultdict(set) for item in questions
+        }
+        memory_first_rank: dict[str, dict[str, int]] = {item["qid"]: {} for item in questions}
         for model_name, spec in self.config["models"].items():
             if spec["role"] != "dense":
                 continue
@@ -133,7 +141,7 @@ class RetrievalPipeline:
             )
             scores, indices = self._search_vectors(model_name, index, vectors, options["chunk_search_k"])
             neighbour_k = min(len(self.train_questions), max(256, options["query_memory_neighbors"] * 8))
-            _, memory_indices = self._search_vectors(model_name, index, vectors, neighbour_k, memory=True)
+            memory_values, memory_indices = self._search_vectors(model_name, index, vectors, neighbour_k, memory=True)
             for row, item in enumerate(questions):
                 ranking, channel_evidence = self._aggregate_chunks(
                     indices[row], scores[row], chunks, options["per_channel_top_k"], options["doc_second_chunk_weight"]
@@ -142,21 +150,46 @@ class RetrievalPipeline:
                 output[item["qid"]]["evidence"][model_name] = channel_evidence
                 allowed = allowed_train_qids.get(item["qid"]) if allowed_train_qids else None
                 documents: list[str] = []
-                for neighbour_index in memory_indices[row]:
+                seen_documents: set[str] = set()
+                for neighbour_rank, neighbour_index in enumerate(memory_indices[row], start=1):
                     neighbour = self.train_questions[int(neighbour_index)]
                     if allowed is not None and neighbour["qid"] not in allowed:
                         continue
-                    documents.extend(neighbour["answers"])
-                    if len(documents) >= options["query_memory_neighbors"]:
+                    similarity = max(0.0, float(memory_values[row][neighbour_rank - 1]))
+                    for document_id in neighbour["answers"]:
+                        if document_id not in seen_documents and len(seen_documents) >= options["query_memory_neighbors"]:
+                            continue
+                        seen_documents.add(document_id)
+                        documents.append(document_id)
+                        memory_scores[item["qid"]][document_id] += similarity + 1.0 / (60 + neighbour_rank)
+                        memory_models[item["qid"]][document_id].add(model_name)
+                        memory_first_rank[item["qid"]].setdefault(document_id, neighbour_rank)
+                    if len(seen_documents) >= options["query_memory_neighbors"]:
                         break
-                memory_channels[item["qid"]][model_name] = list(dict.fromkeys(documents))
             del model
             del vectors, memory_indices
             gc.collect()
-        for qid, memories in memory_channels.items():
-            output[qid]["channels"]["query_memory"] = rrf(
-                memories, {name: 1.0 for name in memories}, 40, options["per_channel_top_k"]
-            )
+        for item in questions:
+            qid = item["qid"]
+            output[qid]["channels"]["query_memory"] = [
+                document_id
+                for document_id, _ in sorted(
+                    memory_scores[qid].items(),
+                    key=lambda pair: (
+                        -len(memory_models[qid][pair[0]]),
+                        -pair[1],
+                        memory_first_rank[qid][pair[0]],
+                        pair[0],
+                    ),
+                )[: options["per_channel_top_k"]]
+            ]
+            allowed = allowed_train_qids.get(qid) if allowed_train_qids else None
+            exact_documents: list[str] = []
+            for neighbour in self.train_by_normalized_question[normalize_question(item["question"])]:
+                if neighbour["qid"] == qid or (allowed is not None and neighbour["qid"] not in allowed):
+                    continue
+                exact_documents.extend(neighbour["answers"])
+            output[qid]["channels"]["query_exact"] = list(dict.fromkeys(exact_documents))[: options["per_channel_top_k"]]
         return output
 
     def retrieve(self, question: str, allowed_train_qids: set[str] | None = None) -> dict[str, Any]:
@@ -168,7 +201,12 @@ class RetrievalPipeline:
     def fuse(self, retrieval: dict[str, Any], weights: dict[str, float], rrf_k: int) -> dict[str, Any]:
         candidates = rrf(retrieval["channels"], weights, rrf_k, self.config["retrieval"]["fused_top_k"])
         evidence: dict[str, list[str]] = defaultdict(list)
-        for channel, per_doc in retrieval["evidence"].items():
+        dense_channels = [name for name, spec in self.config["models"].items() if spec["role"] == "dense"]
+        priority = [*dense_channels, "bm25", "accent_char"]
+        priority.extend(name for name in retrieval["evidence"] if name not in priority)
+        for channel in priority:
+            per_doc = retrieval["evidence"].get(channel, {})
             for doc_id in candidates:
                 evidence[doc_id].extend(per_doc.get(doc_id, []))
-        return {"candidates": candidates, "evidence": {key: list(dict.fromkeys(value))[:2] for key, value in evidence.items()}}
+        limit = self.config["reranking"]["evidence_chunks_per_document"]
+        return {"candidates": candidates, "evidence": {key: list(dict.fromkeys(value))[:limit] for key, value in evidence.items()}}

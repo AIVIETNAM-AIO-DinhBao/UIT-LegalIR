@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:  # Keep corpus preparation usable in minimal test tooling.
+    def tqdm(iterable, **_: Any):  # type: ignore[misc]
+        return iterable
 
 from .storage import ensure_dir, read_json, write_json, write_jsonl
 from .text import clean_text, legal_chunks
@@ -31,9 +36,18 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
     train_path = artifacts / "train_questions.jsonl"
     public_path = artifacts / "public_questions.jsonl"
     manifest_path = artifacts / "prepare_manifest.json"
+    chunking_fingerprint = hashlib.sha256(
+        json.dumps(config["chunking"], ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     if resume and all(path.exists() for path in (corpus_path, short_path, long_path, train_path, public_path, manifest_path)):
         manifest = read_json(manifest_path)
-        if manifest.get("documents", 0) > 0 and manifest.get("short_chunks", 0) > 0 and manifest.get("long_chunks", 0) > 0:
+        if (
+            manifest.get("schema_version") == 2
+            and manifest.get("chunking_fingerprint") == chunking_fingerprint
+            and manifest.get("documents", 0) > 0
+            and manifest.get("short_chunks", 0) > 0
+            and manifest.get("long_chunks", 0) > 0
+        ):
             return manifest
 
     contexts_dir = Path(paths["contexts_dir"])
@@ -61,10 +75,10 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
         short, long = legal_chunks(
             name,
             passage,
-            chunking["short_tokens"],
-            chunking["short_overlap"],
-            chunking["long_tokens"],
-            chunking["long_overlap"],
+            chunking["short_words"],
+            chunking["short_overlap_words"],
+            chunking["long_words"],
+            chunking["long_overlap_words"],
         )
         for position, chunk in enumerate(short):
             short_rows.append({"chunk_id": f"{doc_id}:s:{position}", "doc_id": doc_id, **chunk})
@@ -77,6 +91,8 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
     write_jsonl(train_path, load_questions(paths["train_file"]))
     write_jsonl(public_path, load_questions(paths["public_file"]))
     manifest = {
+        "schema_version": 2,
+        "chunking_fingerprint": chunking_fingerprint,
         "documents": len(corpus_rows),
         "short_chunks": len(short_rows),
         "long_chunks": len(long_rows),
@@ -85,4 +101,3 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
     }
     write_json(manifest_path, manifest)
     return manifest
-

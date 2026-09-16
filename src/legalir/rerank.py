@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,6 @@ from transformers import AutoModel, AutoModelForSequenceClassification, AutoToke
 from .fusion import rrf
 from .models import model_load_kwargs, model_source
 from .storage import read_jsonl
-from .text import tokenize_words
 
 
 class EvidenceStore:
@@ -23,10 +23,15 @@ class EvidenceStore:
                 self.chunks[row["chunk_id"]] = row
                 self.by_document[row["doc_id"]].append(row["chunk_id"])
 
-    def evidence(self, document_id: str, preferred: list[str], max_words: int) -> str:
+    def evidence(self, document_id: str, preferred: list[str]) -> str:
         chunk_ids = list(dict.fromkeys(preferred + self.by_document.get(document_id, [])[:2]))
-        text = "\n\n".join(self.chunks[chunk_id]["text"] for chunk_id in chunk_ids if chunk_id in self.chunks)
-        return " ".join(tokenize_words(text)[:max_words])
+        return "\n\n".join(self.chunks[chunk_id]["text"] for chunk_id in chunk_ids if chunk_id in self.chunks)
+
+
+def truncate_to_tokens(text: str, tokenizer: Any, maximum: int) -> str:
+    """Apply the actual model tokenizer instead of treating words as tokens."""
+    encoded = tokenizer(text, add_special_tokens=False, truncation=True, max_length=maximum)
+    return tokenizer.decode(encoded["input_ids"], skip_special_tokens=True)
 
 
 def _device(runtime: dict[str, Any]) -> str:
@@ -73,6 +78,7 @@ class JinaListwiseReranker:
         source = model_source(spec)
         load_kwargs = model_load_kwargs(spec)
         tokenizer = AutoTokenizer.from_pretrained(source, **load_kwargs)
+        self.tokenizer = tokenizer
         self.model = AutoModel.from_pretrained(
             source,
             trust_remote_code=True,
@@ -101,16 +107,22 @@ class JinaListwiseReranker:
         for index, document in enumerate(documents):
             buckets[index % len(buckets)].append((index, document))
         scores: dict[int, float] = {}
+        semifinalists: list[int] = []
+        per_window = max(1, math.ceil(self.config["reranking"]["jina_final_top_k"] / len(buckets)))
         for bucket in buckets:
             results = self.model.rerank(query, [document for _, document in bucket])
             for result in results:
                 scores[bucket[result["index"]][0]] = float(result["relevance_score"])
-        semifinalists = [index for index, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))[: self.config["reranking"]["jina_final_top_k"]]]
+            semifinalists.extend(bucket[result["index"]][0] for result in results[:per_window])
+        # Listwise scores are only comparable inside the window that produced
+        # them.  The final listwise pass is the cross-window comparison.
+        semifinalists = sorted(dict.fromkeys(semifinalists))[: self.config["reranking"]["jina_final_top_k"]]
         final_documents = [documents[index] for index in semifinalists]
         final = self.model.rerank(query, final_documents)
         final_indices = [semifinalists[result["index"]] for result in final]
-        remaining = [index for index in range(len(documents)) if index not in set(final_indices)]
-        return final_indices + sorted(remaining, key=lambda index: (-scores.get(index, float("-inf")), index))
+        final_set = set(final_indices)
+        remaining = [index for index in range(len(documents)) if index not in final_set]
+        return final_indices + remaining
 
     def close(self) -> None:
         del self.model
@@ -134,7 +146,14 @@ def rerank_candidates(
         pairwise_rankings: dict[str, list[str]] = {}
         for item in questions:
             candidate = fused[item["qid"]]
-            documents = [store.evidence(doc_id, candidate["evidence"].get(doc_id, []), 1400) for doc_id in candidate["candidates"]]
+            documents = [
+                truncate_to_tokens(
+                    store.evidence(doc_id, candidate["evidence"].get(doc_id, [])),
+                    pairwise.tokenizer,
+                    config["reranking"]["pairwise_evidence_tokens"],
+                )
+                for doc_id in candidate["candidates"]
+            ]
             order = pairwise.rank(item["question"], documents)
             pairwise_rankings[item["qid"]] = [candidate["candidates"][index] for index in order]
         pairwise.close()
@@ -145,7 +164,11 @@ def rerank_candidates(
         for item in questions:
             candidate = fused[item["qid"]]
             documents = [
-                store.evidence(doc_id, candidate["evidence"].get(doc_id, []), config["reranking"]["jina_evidence_tokens"])
+                truncate_to_tokens(
+                    store.evidence(doc_id, candidate["evidence"].get(doc_id, [])),
+                    jina.tokenizer,
+                    config["reranking"]["jina_evidence_tokens"],
+                )
                 for doc_id in candidate["candidates"]
             ]
             order = jina.rank(item["question"], documents)

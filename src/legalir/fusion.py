@@ -4,13 +4,15 @@ from collections import defaultdict
 from itertools import product
 from typing import Iterable
 
-from .validation import score_predictions
+from .validation import score_candidates
 
 
 def rrf(rankings: dict[str, list[str]], weights: dict[str, float], k: int, limit: int) -> list[str]:
     scores: defaultdict[str, float] = defaultdict(float)
     for channel, documents in rankings.items():
         weight = weights.get(channel, 1.0)
+        if weight <= 0:
+            continue
         for rank, document_id in enumerate(documents, start=1):
             scores[str(document_id)] += weight / (k + rank)
     return [document_id for document_id, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit]]
@@ -24,7 +26,7 @@ def coordinate_search(
     limit: int,
     initial_weights: dict[str, float] | None = None,
 ) -> dict:
-    """Small deterministic coordinate search, ordered by official Recall then Precision."""
+    """Tune retrieval for candidate coverage, not the five-result submission metric."""
     channels = list(channel_rankings)
     weights = initial_weights or {channel: 1.0 for channel in channels}
     best: dict | None = None
@@ -51,7 +53,7 @@ def coordinate_search(
                         )
                         for item in questions
                     }
-                    metrics = score_predictions(predictions, questions)
+                    metrics = score_candidates(predictions, questions)
                     result = {"weights": trial, "rrf_k": rrf_k, "metrics": metrics}
                     if candidate_best is None or _better(result, candidate_best):
                         candidate_best = result
@@ -72,11 +74,18 @@ def _evaluate(channel_rankings: dict[str, dict[str, list[str]]], questions: list
         )
         for item in questions
     }
-    return {"weights": dict(weights), "rrf_k": rrf_k, "metrics": score_predictions(predictions, questions)}
+    return {"weights": dict(weights), "rrf_k": rrf_k, "metrics": score_candidates(predictions, questions)}
 
 
 def _better(left: dict, right: dict) -> bool:
-    return (left["metrics"]["recall"], left["metrics"]["precision"]) > (
-        right["metrics"]["recall"],
-        right["metrics"]["precision"],
+    return (
+        left["metrics"]["candidate_recall"],
+        left["metrics"]["recall_at_50"],
+        left["metrics"]["recall_at_20"],
+        left["metrics"]["recall_at_5"],
+    ) > (
+        right["metrics"]["candidate_recall"],
+        right["metrics"]["recall_at_50"],
+        right["metrics"]["recall_at_20"],
+        right["metrics"]["recall_at_5"],
     )

@@ -49,30 +49,32 @@ models:
     license: Apache-2.0
 
 chunking:
-  short_tokens: 384
-  short_overlap: 64
-  long_tokens: 1024
-  long_overlap: 128
+  short_words: 300
+  short_overlap_words: 48
+  long_words: 896
+  long_overlap_words: 128
 
 retrieval:
-  per_channel_top_k: 100
-  chunk_search_k: 600
-  fused_top_k: 120
-  query_memory_neighbors: 30
+  per_channel_top_k: 150
+  chunk_search_k: 1000
+  fused_top_k: 200
+  query_memory_neighbors: 60
+  query_exact_weight: 4.0
   doc_second_chunk_weight: 0.1
-  rrf_k_values: [20, 40, 60, 100]
-  first_stage_weight_values: [0.5, 1.0, 1.5, 2.0]
+  rrf_k_values: [10, 20, 40, 60, 100]
+  first_stage_weight_values: [0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0]
 
 reranking:
   pairwise_max_length: 1536
+  pairwise_evidence_tokens: 1400
   pairwise_batch_size: 8
   jina_window_size: 20
   jina_evidence_tokens: 384
   jina_final_top_k: 30
+  evidence_chunks_per_document: 4
   final_rrf_k_values: [20, 40, 60]
-  final_reranker_weight_values: [0.75, 1.0, 1.25, 1.5]
-  final_first_stage_weight_values: [0.15, 0.2, 0.25]
+  final_reranker_weight_values: [0.0, 0.5, 0.75, 1.0, 1.25, 1.5]
+  final_first_stage_weight_values: [0.0, 0.1, 0.2, 0.3]
 
 validation:
   folds: 5
-  reranker_validation_fold: 0

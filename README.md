@@ -30,10 +30,10 @@ Each repository revision is pinned in the Kaggle configuration and model files a
 
 ### Processing details
 
-- `prepare` preserves document IDs and creates article-aware short (384-token) and long (1,024-token) chunk views.
-- The first stage combines word BM25, accent-insensitive character 3–5 gram TF-IDF, the three dense rankings, and a query-memory channel. Query memory transfers document IDs from semantically similar training questions; during training it excludes questions from the held-out fold.
-- Candidate chunks are aggregated to document scores using the best chunk plus a small contribution from the second-best chunk. Weighted reciprocal-rank fusion is tuned with five-fold out-of-fold retrieval rankings.
-- The two rerankers see local evidence text rather than a remote endpoint. Jina uses round-robin candidate windows to avoid concentrating each window at one end of the first-stage ranking. Final weighted RRF is tuned on the configured validation fold.
+- `prepare` preserves document IDs and creates article-aware short (300-word) and long (896-word) chunk views; overlap cannot make a chunk exceed its declared budget.
+- The first stage combines word BM25, accent-insensitive character 3–5 gram TF-IDF, the three dense rankings, query memory, and an exact-normalized-question channel. Query memory transfers document IDs from semantically similar training questions; during training it excludes questions from the held-out fold.
+- Candidate chunks are aggregated to document scores using the best chunk plus a small contribution from the second-best chunk. Weighted reciprocal-rank fusion is tuned for candidate coverage (not the five-result submission constraint), with zero-weight channels genuinely disabled.
+- The two rerankers see local evidence text truncated by their own tokenizers. Dense evidence is prioritized over lexical fallback, and Jina advances a balanced set from each first-pass window before its final cross-window pass. Final weighted RRF is selected from joined five-fold OOF rerankings.
 - `predict` validates the submission schema and enforces five unique, corpus-valid document IDs for every question.
 
 ## Kaggle quick start
@@ -59,7 +59,7 @@ The first `audit` writes `artifacts/model_manifest.json` and blocks a submission
 - `prepare`: parse selected contexts, preserve document IDs, and create article-aware short/long chunk views.
 - `index`: create exact FAISS dense indices, lexical BM25/character indices, and train-question embedding caches.
 - `retrieve`: build or resume cached first-stage rankings for `--split train` or `--split public`.
-- `tune`: produce 5-fold query-memory OOF retrieval rankings and tune first-stage RRF; `--final` tunes final RRF after reranking a validation fold.
+- `tune`: produce 5-fold query-memory OOF retrieval rankings and tune first-stage RRF; `--final` tunes final RRF after reranking every OOF fold (or one fold when `--fold` is specified).
 - `rerank`: score a validation fold or the public questions with both local rerankers.
 - `predict`: generate a schema-checked `submission.json` with exactly five unique IDs per question.
 

@@ -1,7 +1,7 @@
 import unittest
 
-from legalir.fusion import rrf
-from legalir.validation import grouped_folds, score_predictions, validate_submission_shape
+from legalir.fusion import coordinate_search, rrf
+from legalir.validation import grouped_folds, score_candidates, score_predictions, validate_submission_shape
 
 
 class FusionValidationTests(unittest.TestCase):
@@ -32,7 +32,20 @@ class FusionValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_submission_shape(submission, self.questions, {"10", "11", "12", "13", "14"})
 
+    def test_candidate_metric_does_not_apply_five_document_submission_limit(self):
+        rankings = {"1": ["99", "98", "97", "96", "95", "10"], "2": ["99", "98", "97", "96", "11", "12"]}
+        self.assertEqual(score_predictions(rankings, self.questions)["recall"], 0.0)
+        self.assertEqual(score_candidates(rankings, self.questions)["candidate_recall"], 1.0)
+
+    def test_coordinate_search_optimizes_candidate_coverage(self):
+        rankings = {
+            "useful": {"1": ["10"], "2": ["11", "12"]},
+            "noise": {"1": ["99"], "2": ["98"]},
+        }
+        result = coordinate_search(rankings, self.questions, [20], [0.0, 1.0], 20)
+        self.assertEqual(result["metrics"]["candidate_recall"], 1.0)
+        self.assertEqual(result["weights"]["useful"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
-

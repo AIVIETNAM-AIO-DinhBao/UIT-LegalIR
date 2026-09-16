@@ -1,6 +1,6 @@
 import unittest
 
-from legalir.text import legal_chunks, normalize_question, strip_accents
+from legalir.text import legal_chunks, normalize_question, strip_accents, tokenize_words
 
 
 class LegalTextTests(unittest.TestCase):
@@ -24,7 +24,11 @@ class LegalTextTests(unittest.TestCase):
         self.assertEqual(len(short), 1)
         self.assertEqual(len(long), 1)
 
+    def test_chunk_budget_includes_overlap_and_heading(self):
+        text = "Điều 1. Nội dung\n" + "từ " * 80
+        short, _ = legal_chunks("Luật mẫu", text, 20, 8, 40, 8)
+        self.assertTrue(all(len(tokenize_words(row["text"])) <= 20 for row in short))
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -11,7 +11,7 @@ from .prepare import build_corpus
 from .rerank import final_predictions, rerank_candidates
 from .retrieval import RetrievalPipeline
 from .storage import read_json, read_jsonl, write_json
-from .validation import grouped_folds, oracle_recall, score_predictions, validate_submission_shape
+from .validation import grouped_folds, oracle_recall, score_candidates, score_predictions, validate_submission_shape
 
 
 def prepare(config: dict[str, Any], resume: bool) -> dict[str, int]:
@@ -87,9 +87,18 @@ def tune_first_stage(config: dict[str, Any], resume: bool) -> dict[str, Any]:
         options["first_stage_weight_values"],
         options["fused_top_k"],
     )
+    # Exact normalized matches cannot appear in OOF training (duplicates share
+    # a fold), but can legitimately occur in the public set.  Keep this
+    # deterministic, high-confidence channel enabled instead of letting its
+    # all-empty OOF ranking be tuned to zero.
+    best["weights"]["query_exact"] = options["query_exact_weight"]
     fused = _fuse_cached(config, retrievals, best["weights"], best["rrf_k"])
     candidates = {qid: value["candidates"] for qid, value in fused.items()}
     best["oracle_recall_at_fused_top_k"] = oracle_recall(candidates, questions)
+    best["candidate_metrics"] = score_candidates(candidates, questions)
+    best["channel_candidate_metrics"] = {
+        channel: score_candidates(rankings, questions) for channel, rankings in channel_rankings.items()
+    }
     write_json(destination, best)
     write_json(artifacts / "fused_train.json", fused)
     return best
@@ -100,12 +109,19 @@ def _fuse_cached(config: dict[str, Any], retrievals: dict[str, dict[str, Any]], 
     for qid, retrieval in retrievals.items():
         candidates = rrf(retrieval["channels"], weights, rrf_k, config["retrieval"]["fused_top_k"])
         evidence: dict[str, list[str]] = {document_id: [] for document_id in candidates}
-        for per_document in retrieval["evidence"].values():
+        dense_channels = [name for name, spec in config["models"].items() if spec["role"] == "dense"]
+        priority = [*dense_channels, "bm25", "accent_char"]
+        priority.extend(name for name in retrieval["evidence"] if name not in priority)
+        for channel in priority:
+            per_document = retrieval["evidence"].get(channel, {})
             for document_id in candidates:
                 evidence[document_id].extend(per_document.get(document_id, []))
         result[qid] = {
             "candidates": candidates,
-            "evidence": {document_id: list(dict.fromkeys(chunk_ids))[:2] for document_id, chunk_ids in evidence.items()},
+            "evidence": {
+                document_id: list(dict.fromkeys(chunk_ids))[: config["reranking"]["evidence_chunks_per_document"]]
+                for document_id, chunk_ids in evidence.items()
+            },
         }
     return result
 
@@ -145,9 +161,9 @@ def run_reranking(
     return result
 
 
-def tune_final_stage(config: dict[str, Any], fold: int, resume: bool) -> dict[str, Any]:
+def tune_final_stage(config: dict[str, Any], fold: int | None, resume: bool) -> dict[str, Any]:
     artifacts = Path(config["paths"]["artifacts_dir"])
-    destination = artifacts / f"final_weights_fold{fold}.json"
+    destination = artifacts / (f"final_weights_fold{fold}.json" if fold is not None else "final_weights.json")
     if resume and destination.exists():
         return read_json(destination)
     first_stage = read_json(artifacts / "first_stage_weights.json")
@@ -155,8 +171,18 @@ def tune_final_stage(config: dict[str, Any], fold: int, resume: bool) -> dict[st
     fused = _fuse_cached(config, retrievals, first_stage["weights"], first_stage["rrf_k"])
     all_questions = _load_questions(config, "train")
     assignments = grouped_folds(all_questions, config["validation"]["folds"])
-    questions = [item for item in all_questions if assignments[item["qid"]] == fold]
-    rerankings = run_reranking(config, "train", fold, resume)
+    if fold is None:
+        # Each ranking was produced while its fold's query-memory labels were
+        # withheld.  Tune on the joined OOF predictions rather than fold 0.
+        questions = all_questions
+        rerankings: dict[str, dict[str, list[str]]] = {"jina": {}, "vietnamese_reranker": {}}
+        for held_out_fold in range(config["validation"]["folds"]):
+            per_fold = run_reranking(config, "train", held_out_fold, resume)
+            for name in rerankings:
+                rerankings[name].update(per_fold[name])
+    else:
+        questions = [item for item in all_questions if assignments[item["qid"]] == fold]
+        rerankings = run_reranking(config, "train", fold, resume)
     options = config["reranking"]
     best: dict[str, Any] | None = None
     for jina_weight, vi_weight, first_weight, rrf_k in product(
@@ -170,11 +196,23 @@ def tune_final_stage(config: dict[str, Any], fold: int, resume: bool) -> dict[st
             {item["qid"]: fused[item["qid"]]["candidates"] for item in questions}, rerankings, weights, rrf_k
         )
         candidate = {"weights": weights, "rrf_k": rrf_k, "metrics": score_predictions(predictions, questions)}
-        if best is None or (candidate["metrics"]["recall"], candidate["metrics"]["precision"]) > (best["metrics"]["recall"], best["metrics"]["precision"]):
+        if best is None or candidate["metrics"]["recall"] > best["metrics"]["recall"]:
             best = candidate
     assert best is not None
     write_json(destination, best)
-    write_json(artifacts / "final_weights.json", best)
+    if fold is None:
+        per_fold_metrics: dict[str, dict[str, float]] = {}
+        for held_out_fold in range(config["validation"]["folds"]):
+            fold_questions = [item for item in all_questions if assignments[item["qid"]] == held_out_fold]
+            fold_predictions = final_predictions(
+                {item["qid"]: fused[item["qid"]]["candidates"] for item in fold_questions},
+                rerankings,
+                best["weights"],
+                best["rrf_k"],
+            )
+            per_fold_metrics[str(held_out_fold)] = score_predictions(fold_predictions, fold_questions)
+        best["oof_fold_metrics"] = per_fold_metrics
+        write_json(destination, best)
     return best
 
 

@@ -83,13 +83,21 @@ def chunk_section(
 ) -> list[str]:
     if not tokenize_words(section):
         return [metadata_prefix] if metadata_prefix else []
-    payload_limit = max(16, max_tokens - len(tokenize_words(metadata_prefix)))
-    step = max(1, payload_limit - overlap)
+    # These limits are deliberately word budgets.  The dense encoders still
+    # apply their own tokenizer limit, but an emitted chunk must never exceed
+    # the configured budget merely because overlap was carried into a new unit.
+    prefix_words = tokenize_words(metadata_prefix)
+    payload_limit = max(1, max_tokens - len(prefix_words))
+    overlap = min(max(0, overlap), payload_limit - 1)
     chunks: list[str] = []
 
     def emit(words: list[str]) -> None:
         if words:
-            chunks.append(clean_text(f"{metadata_prefix}\n{' '.join(words)}"))
+            # A pathological long title must not make a chunk exceed its
+            # declared budget.  Normal legal headings fit unchanged.
+            selected_words = words[:payload_limit]
+            selected_prefix = prefix_words[: max(0, max_tokens - len(selected_words))]
+            chunks.append(clean_text(f"{' '.join(selected_prefix)}\n{' '.join(selected_words)}"))
 
     # Prefer natural Khoản/Điểm boundaries. A very long clause still falls back
     # to a sliding window, preserving the configured overlap.
@@ -99,19 +107,18 @@ def chunk_section(
         unit_words = tokenize_words(unit)
         if not unit_words:
             continue
-        if len(unit_words) > payload_limit:
-            if window:
+        remaining = unit_words
+        while remaining:
+            capacity = payload_limit - len(window)
+            if capacity == 0:
                 emit(window)
-                window = []
-            for start in range(0, len(unit_words), step):
-                emit(unit_words[start : start + payload_limit])
-                if start + payload_limit >= len(unit_words):
-                    break
-            continue
-        if window and len(window) + len(unit_words) > payload_limit:
-            emit(window)
-            window = window[-overlap:] if overlap else []
-        window.extend(unit_words)
+                window = window[-overlap:] if overlap else []
+                capacity = payload_limit - len(window)
+            window.extend(remaining[:capacity])
+            remaining = remaining[capacity:]
+            if remaining:
+                emit(window)
+                window = window[-overlap:] if overlap else []
     emit(window)
     return chunks
 

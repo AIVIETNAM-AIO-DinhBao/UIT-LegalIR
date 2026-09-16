@@ -36,6 +36,24 @@ def score_predictions(predictions: dict[str, list[str]], questions: list[dict[st
     }
 
 
+def score_candidates(predictions: dict[str, list[str]], questions: list[dict[str, Any]]) -> dict[str, float]:
+    """Measure a candidate set without applying the official five-result limit."""
+    def recall_at(depth: int) -> float:
+        values: list[float] = []
+        for item in questions:
+            truth = set(item["answers"])
+            prediction = set(predictions.get(item["qid"], [])[:depth])
+            values.append(len(truth.intersection(prediction)) / len(truth) if truth else 0.0)
+        return sum(values) / max(1, len(values))
+
+    return {
+        "candidate_recall": recall_at(10_000_000),
+        "recall_at_5": recall_at(5),
+        "recall_at_20": recall_at(20),
+        "recall_at_50": recall_at(50),
+    }
+
+
 def oracle_recall(candidates: dict[str, list[str]], questions: list[dict[str, Any]]) -> float:
     values = []
     for item in questions:

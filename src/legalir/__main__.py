@@ -38,7 +38,7 @@ def main() -> int:
 
         result = {"questions": len(build_retrieval_cache(config, args.split, args.resume))}
     elif args.command == "tune":
-        result = tune_final_stage(config, args.fold if args.fold is not None else config["validation"]["reranker_validation_fold"], args.resume) if args.final else tune_first_stage(config, args.resume)
+        result = tune_final_stage(config, args.fold, args.resume) if args.final else tune_first_stage(config, args.resume)
     elif args.command == "rerank":
         result = run_reranking(config, args.split, args.fold if args.split == "train" else None, args.resume, args.engine)
     else:
