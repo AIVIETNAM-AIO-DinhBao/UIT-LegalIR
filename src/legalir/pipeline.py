@@ -22,6 +22,11 @@ def prepare(config: dict[str, Any], resume: bool) -> dict[str, int]:
 def index(config: dict[str, Any], resume: bool, model_name: str | None = None, lexical_only: bool = False) -> None:
     artifacts = Path(config["paths"]["artifacts_dir"])
     lexical_path = artifacts / "lexical_short.pkl"
+    if model_name is not None:
+        if model_name not in config["models"]:
+            raise ValueError(f"Unknown configured model: {model_name}")
+        if config["models"][model_name]["role"] != "dense":
+            raise ValueError(f"Model {model_name} is not a dense retriever")
 
     def build_lexical_index() -> None:
         chunks_path = artifacts / "chunks_short.jsonl"

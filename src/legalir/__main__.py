@@ -16,7 +16,7 @@ def main() -> int:
     parser.add_argument("--split", choices=["train", "public"], default="train")
     parser.add_argument("--final", action="store_true", help="Tune final reranker fusion after reranking")
     parser.add_argument("--output")
-    parser.add_argument("--model", choices=["vietlegal_e5", "vietnamese_embedding", "nemotron"])
+    parser.add_argument("--model", help="Dense model key from the selected configuration")
     parser.add_argument("--lexical-only", action="store_true")
     parser.add_argument("--engine", choices=["jina", "vietnamese_reranker"])
     args = parser.parse_args()

@@ -1,0 +1,94 @@
+paths:
+  contexts_dir: selected-contexts
+  train_file: train.json
+  public_file: public-official.json
+  artifacts_dir: artifacts_phase2_harrier
+  submission_file: submission_phase2_harrier.json
+
+runtime:
+  seed: 2026
+  device: cuda
+  dtype: bfloat16
+  batch_size: 64
+  num_workers: 4
+
+models:
+  vietlegal_harrier:
+    id: mainguyen9/vietlegal-harrier-0.6b
+    revision: 91a0e1ebe4b63b4475bbae40658b8ca9231bea74
+    local_path: null
+    local_files_only: true
+    role: dense
+    license: Apache-2.0
+    prompt_query: "Instruct: Given a Vietnamese legal question, retrieve relevant legal passages that answer the question\nQuery: "
+    prompt_document: ""
+    chunk_view: short
+  vietnamese_embedding:
+    id: AITeamVN/Vietnamese_Embedding_v2
+    revision: 18b44161e041bf1d3a333ab5144b5b7b93f914d2
+    local_path: null
+    local_files_only: true
+    role: dense
+    license: Apache-2.0
+    prompt_query: ""
+    prompt_document: ""
+    chunk_view: long
+  nemotron:
+    id: nvidia/Nemotron-3-Embed-1B-BF16
+    revision: c0c9fea93ea424587517f2c59e20db9f1d6bf615
+    local_path: null
+    local_files_only: true
+    role: dense
+    license: OpenMDW-1.1
+    prompt_query: "query: "
+    prompt_document: "passage: "
+    chunk_view: long
+  jina:
+    id: jinaai/jina-reranker-v3.5
+    revision: e8a93f33f0b22108f8c2364f8484ce3422552fbc
+    local_path: null
+    local_files_only: true
+    role: listwise_reranker
+    license: CC-BY-NC-4.0
+  vietnamese_reranker:
+    id: AITeamVN/Vietnamese_Reranker
+    revision: f536976248403314225d7fdfdbc87f0e9516a54e
+    local_path: null
+    local_files_only: true
+    role: pairwise_reranker
+    license: Apache-2.0
+
+chunking:
+  short_words: 300
+  short_overlap_words: 48
+  long_words: 896
+  long_overlap_words: 128
+
+retrieval:
+  per_channel_top_k: 150
+  chunk_search_k: 1000
+  fused_top_k: 200
+  query_memory_neighbors: 60
+  query_exact_weight: 4.0
+  doc_second_chunk_weight: 0.1
+  first_stage_tuning_questions: 2000
+  coordinate_search_passes: 2
+  rrf_k_values: [20, 40, 60]
+  first_stage_weight_values: [0.0, 0.5, 1.0, 1.5, 2.0]
+
+reranking:
+  rerank_top_k: 80
+  pairwise_max_length: 1536
+  pairwise_evidence_tokens: 1400
+  pairwise_batch_size: 32
+  jina_window_size: 20
+  jina_evidence_tokens: 384
+  jina_final_top_k: 30
+  evidence_chunks_per_document: 4
+  final_rrf_k_values: [20, 40, 60]
+  final_reranker_weight_values: [0.0, 0.5, 0.75, 1.0, 1.25, 1.5]
+  final_first_stage_weight_values: [0.0, 0.1, 0.2, 0.3]
+
+validation:
+  folds: 5
+  reranker_tuning_folds: [0]

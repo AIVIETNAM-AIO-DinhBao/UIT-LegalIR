@@ -2,6 +2,8 @@ import json
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,6 +65,31 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertNotIn("huggingface.co", source)
         self.assertNotIn("CUDA_VISIBLE_DEVICES': '1'", source)
         self.assertNotIn("'pip', 'check'", source)
+
+    def test_phase2_harrier_notebooks_are_isolated_and_pinned(self):
+        directory = ROOT / "kaggle" / "phase2_harrier"
+        builder = code_source(directory / "build_offline_bundle.ipynb")
+        runtime = code_source(directory / "legalir_rtx_pro_6000_offline.ipynb")
+        config = yaml.safe_load((directory / "kaggle_rtx_pro_6000.yaml").read_text(encoding="utf-8"))
+
+        self.assertIn("legalir-phase2-harrier-bundle", builder)
+        self.assertIn("mainguyen9/vietlegal-harrier-0.6b", builder)
+        self.assertIn("91a0e1ebe4b63b4475bbae40658b8ca9231bea74", builder)
+        self.assertIn("revision=spec['revision']", builder)
+        self.assertNotIn("'pip', 'install'", builder)
+
+        self.assertIn("HF_HUB_OFFLINE'] = '1'", runtime)
+        self.assertIn("legalir-phase2-harrier-run", runtime)
+        self.assertIn("phase2-vietlegal-harrier-0.6b", runtime)
+        self.assertIn("dense_models =", runtime)
+        self.assertNotIn("git clone", runtime)
+        self.assertNotIn("huggingface.co", runtime)
+
+        self.assertIn("vietlegal_harrier", config["models"])
+        self.assertNotIn("vietlegal_e5", config["models"])
+        self.assertEqual(config["models"]["vietlegal_harrier"]["prompt_document"], "")
+        self.assertTrue(config["models"]["vietlegal_harrier"]["prompt_query"].startswith("Instruct:"))
+        self.assertEqual(config["paths"]["artifacts_dir"], "artifacts_phase2_harrier")
 
 
 if __name__ == "__main__":
