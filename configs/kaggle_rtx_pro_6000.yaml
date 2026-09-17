@@ -72,10 +72,13 @@ retrieval:
   query_memory_neighbors: 60
   query_exact_weight: 4.0
   doc_second_chunk_weight: 0.1
-  rrf_k_values: [10, 20, 40, 60, 100]
-  first_stage_weight_values: [0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0]
+  first_stage_tuning_questions: 2000
+  coordinate_search_passes: 2
+  rrf_k_values: [20, 40, 60]
+  first_stage_weight_values: [0.0, 0.5, 1.0, 1.5, 2.0]
 
 reranking:
+  rerank_top_k: 80
   pairwise_max_length: 1536
   pairwise_evidence_tokens: 1400
   pairwise_batch_size: 32
@@ -89,3 +92,4 @@ reranking:
 
 validation:
   folds: 5
+  reranker_tuning_folds: [0]

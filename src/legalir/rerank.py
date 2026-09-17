@@ -146,16 +146,17 @@ def rerank_candidates(
         pairwise_rankings: dict[str, list[str]] = {}
         for item in questions:
             candidate = fused[item["qid"]]
+            candidate_ids = candidate["candidates"][: config["reranking"]["rerank_top_k"]]
             documents = [
                 truncate_to_tokens(
                     store.evidence(doc_id, candidate["evidence"].get(doc_id, [])),
                     pairwise.tokenizer,
                     config["reranking"]["pairwise_evidence_tokens"],
                 )
-                for doc_id in candidate["candidates"]
+                for doc_id in candidate_ids
             ]
             order = pairwise.rank(item["question"], documents)
-            pairwise_rankings[item["qid"]] = [candidate["candidates"][index] for index in order]
+            pairwise_rankings[item["qid"]] = [candidate_ids[index] for index in order]
         pairwise.close()
         result["vietnamese_reranker"] = pairwise_rankings
     if "jina" in engines:
@@ -163,16 +164,17 @@ def rerank_candidates(
         jina_rankings: dict[str, list[str]] = {}
         for item in questions:
             candidate = fused[item["qid"]]
+            candidate_ids = candidate["candidates"][: config["reranking"]["rerank_top_k"]]
             documents = [
                 truncate_to_tokens(
                     store.evidence(doc_id, candidate["evidence"].get(doc_id, [])),
                     jina.tokenizer,
                     config["reranking"]["jina_evidence_tokens"],
                 )
-                for doc_id in candidate["candidates"]
+                for doc_id in candidate_ids
             ]
             order = jina.rank(item["question"], documents)
-            jina_rankings[item["qid"]] = [candidate["candidates"][index] for index in order]
+            jina_rankings[item["qid"]] = [candidate_ids[index] for index in order]
         jina.close()
         result["jina"] = jina_rankings
     return result

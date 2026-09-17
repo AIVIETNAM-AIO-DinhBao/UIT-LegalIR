@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -80,18 +81,25 @@ def tune_first_stage(config: dict[str, Any], resume: bool) -> dict[str, Any]:
         for channel in next(iter(retrievals.values()))["channels"]
     }
     options = config["retrieval"]
+    tuning_limit = min(len(questions), options.get("first_stage_tuning_questions", len(questions)))
+    tuning_questions = sorted(
+        questions,
+        key=lambda item: hashlib.sha256(item["qid"].encode("utf-8")).hexdigest(),
+    )[:tuning_limit]
     best = coordinate_search(
         channel_rankings,
-        questions,
+        tuning_questions,
         options["rrf_k_values"],
         options["first_stage_weight_values"],
         options["fused_top_k"],
+        max_passes=options.get("coordinate_search_passes", 2),
     )
     # Exact normalized matches cannot appear in OOF training (duplicates share
     # a fold), but can legitimately occur in the public set.  Keep this
     # deterministic, high-confidence channel enabled instead of letting its
     # all-empty OOF ranking be tuned to zero.
     best["weights"]["query_exact"] = options["query_exact_weight"]
+    best["tuning_questions"] = tuning_limit
     fused = _fuse_cached(config, retrievals, best["weights"], best["rrf_k"])
     candidates = {qid: value["candidates"] for qid, value in fused.items()}
     best["oracle_recall_at_fused_top_k"] = oracle_recall(candidates, questions)
@@ -172,15 +180,20 @@ def tune_final_stage(config: dict[str, Any], fold: int | None, resume: bool) -> 
     all_questions = _load_questions(config, "train")
     assignments = grouped_folds(all_questions, config["validation"]["folds"])
     if fold is None:
-        # Each ranking was produced while its fold's query-memory labels were
-        # withheld.  Tune on the joined OOF predictions rather than fold 0.
-        questions = all_questions
+        held_out_folds = config["validation"].get(
+            "reranker_tuning_folds", list(range(config["validation"]["folds"]))
+        )
+        # Rankings remain OOF because query-memory labels from each selected
+        # fold are withheld.  The runtime profile may intentionally select a
+        # subset of folds for expensive model reranking.
+        questions = [item for item in all_questions if assignments[item["qid"]] in held_out_folds]
         rerankings: dict[str, dict[str, list[str]]] = {"jina": {}, "vietnamese_reranker": {}}
-        for held_out_fold in range(config["validation"]["folds"]):
+        for held_out_fold in held_out_folds:
             per_fold = run_reranking(config, "train", held_out_fold, resume)
             for name in rerankings:
                 rerankings[name].update(per_fold[name])
     else:
+        held_out_folds = [fold]
         questions = [item for item in all_questions if assignments[item["qid"]] == fold]
         rerankings = run_reranking(config, "train", fold, resume)
     options = config["reranking"]
@@ -202,7 +215,7 @@ def tune_final_stage(config: dict[str, Any], fold: int | None, resume: bool) -> 
     write_json(destination, best)
     if fold is None:
         per_fold_metrics: dict[str, dict[str, float]] = {}
-        for held_out_fold in range(config["validation"]["folds"]):
+        for held_out_fold in held_out_folds:
             fold_questions = [item for item in all_questions if assignments[item["qid"]] == held_out_fold]
             fold_predictions = final_predictions(
                 {item["qid"]: fused[item["qid"]]["candidates"] for item in fold_questions},

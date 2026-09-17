@@ -25,6 +25,7 @@ def coordinate_search(
     weight_values: Iterable[float],
     limit: int,
     initial_weights: dict[str, float] | None = None,
+    max_passes: int = 2,
 ) -> dict:
     """Tune retrieval for candidate coverage, not the five-result submission metric."""
     channels = list(channel_rankings)
@@ -35,7 +36,7 @@ def coordinate_search(
         improved = True
         # The search space is tiny. A finite number of passes avoids an unlikely
         # coordinate oscillation on tied integer-valued Recall scores.
-        for _ in range(4):
+        for _ in range(max_passes):
             if not improved:
                 break
             improved = False
