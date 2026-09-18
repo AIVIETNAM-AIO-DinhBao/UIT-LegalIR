@@ -67,11 +67,11 @@ The task specification ranks by Recall and uses Precision as a tiebreaker; the l
 
 ## RTX Pro 6000 with Internet disabled
 
-Use the two-notebook workflow under `kaggle/` when the RTX Pro 6000 runtime requires Internet to be disabled:
+Use the Phase 1 two-notebook workflow under `kaggle/phase1/` when the RTX Pro 6000 runtime requires Internet to be disabled:
 
-1. Run `build_offline_bundle.ipynb` with Internet enabled. It pins and snapshots every model, excludes unused ONNX files, builds the project wheel, downloads the small non-Torch wheelhouse, removes Hub metadata caches, writes checksums, and verifies required model and wheel files. It does not install packages or import the runtime stack.
+1. Run `kaggle/phase1/build_offline_bundle.ipynb` with Internet enabled. It pins and snapshots every model, excludes unused ONNX files, builds the project wheel, downloads the small non-Torch wheelhouse, removes Hub metadata caches, writes checksums, and verifies required model and wheel files. It does not install packages or import the runtime stack.
 2. Save its `legalir-offline-bundle/` output as a Kaggle Dataset.
-3. Attach that bundle and the competition-data dataset to `legalir_rtx_pro_6000_offline.ipynb`, select RTX Pro 6000, and set Internet to **Off**.
+3. Attach that bundle and the competition-data dataset to `kaggle/phase1/legalir_rtx_pro_6000_offline.ipynb`, select RTX Pro 6000, and set Internet to **Off**.
 
 The offline notebook loads the model snapshots by local path and sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. It installs the pinned lightweight packages from the attached wheelhouse into an isolated `/kaggle/working/legalir-runtime` directory with `pip --target --no-index`, then executes both model preflight and every LegalIR pipeline stage in fresh subprocesses whose `PYTHONPATH` starts at that directory. This avoids Kaggle's unavailable `ensurepip` as well as packages already imported by the long-lived notebook kernel. The subprocesses still use Kaggle's CUDA-compatible PyTorch, NumPy, SciPy, and scikit-learn instead of replacing those large compiled packages.
 
@@ -80,3 +80,7 @@ The builder never installs packages or imports the model runtime: it only downlo
 ## Phase 2: VietLegal Harrier ablation
 
 The isolated workflow under `kaggle/phase2_harrier/` replaces only `mainguyen9/vietlegal-e5` with `mainguyen9/vietlegal-harrier-0.6b`. Harrier uses its documented Vietnamese legal retrieval instruction for queries and no passage prefix. Its builder produces `legalir-phase2-harrier-bundle`; its runtime uses separate work, artifact, report, and submission names, and rejects a Phase 1 bundle. Run `build_offline_bundle.ipynb` first with Internet enabled, create a Dataset from that output, then attach it to `legalir_rtx_pro_6000_offline.ipynb` with Internet disabled.
+
+## Phase 3: strong reranker replacement
+
+The workflow under `kaggle/phase3_reranker/` keeps the Phase 2 Harrier retrieval stack and replaces its rerankers with a Vietnamese legal cross-encoder, Qwen3-Reranker-0.6B, and Prism-Qwen3.5-Reranker-0.8B. It deploys 3,930,936,897 parameters, reranks only the first-stage top 20, and calibrates final RRF on 400 deterministic training questions. Run `build_reranker_bundle.ipynb` with Internet enabled, create a Dataset from `legalir-phase3-reranker-delta`, then attach it together with the Phase 2 bundle and competition data to `legalir_rtx_pro_6000_offline.ipynb` with Internet disabled. See `kaggle/phase3_reranker/README.md` for the exact order.

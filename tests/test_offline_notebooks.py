@@ -15,7 +15,7 @@ def code_source(notebook: Path) -> str:
 
 class OfflineNotebookTests(unittest.TestCase):
     def test_builder_pins_snapshots_without_mutating_kaggle_runtime(self):
-        source = code_source(ROOT / "kaggle" / "build_offline_bundle.ipynb")
+        source = code_source(ROOT / "kaggle" / "phase1" / "build_offline_bundle.ipynb")
         self.assertIn("snapshot_download(", source)
         self.assertIn("revision=spec['revision']", source)
         self.assertIn("ignore_patterns=['onnx/*', '*.onnx', '*.onnx_data']", source)
@@ -44,7 +44,7 @@ class OfflineNotebookTests(unittest.TestCase):
         )
 
     def test_rtx_notebook_has_no_network_install_or_clone(self):
-        source = code_source(ROOT / "kaggle" / "legalir_rtx_pro_6000_offline.ipynb")
+        source = code_source(ROOT / "kaggle" / "phase1" / "legalir_rtx_pro_6000_offline.ipynb")
         self.assertIn("HF_HUB_OFFLINE'] = '1'", source)
         self.assertIn("TRANSFORMERS_OFFLINE'] = '1'", source)
         self.assertIn("'--no-index'", source)
@@ -65,6 +65,37 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertNotIn("huggingface.co", source)
         self.assertNotIn("CUDA_VISIBLE_DEVICES': '1'", source)
         self.assertNotIn("'pip', 'check'", source)
+
+    def test_phase3_bundle_and_runtime_are_pinned_and_offline(self):
+        directory = ROOT / "kaggle" / "phase3_reranker"
+        builder = code_source(directory / "build_reranker_bundle.ipynb")
+        runtime = code_source(directory / "legalir_rtx_pro_6000_offline.ipynb")
+        config = yaml.safe_load((directory / "kaggle_rtx_pro_6000.yaml").read_text(encoding="utf-8"))
+
+        self.assertIn("phase3-rerankers-harrier-retrieval", builder)
+        self.assertIn("kiencnt2205/vietnamese-legal-reranker-bge-base", builder)
+        self.assertIn("Qwen/Qwen3-Reranker-0.6B", builder)
+        self.assertIn("infgrad/Prism-Qwen3.5-Reranker-0.8B", builder)
+        self.assertIn("revision=spec['revision']", builder)
+        self.assertNotIn("'pip', 'install'", builder)
+
+        self.assertIn("HF_HUB_OFFLINE", runtime)
+        self.assertIn("TRANSFORMERS_OFFLINE", runtime)
+        self.assertIn("'--no-index'", runtime)
+        self.assertIn("legal_reranker", runtime)
+        self.assertIn("qwen3_reranker", runtime)
+        self.assertIn("prism_reranker", runtime)
+        self.assertNotIn("huggingface.co", runtime)
+        self.assertNotIn("git clone", runtime)
+
+        self.assertEqual(config["reranking"]["rerank_top_k"], 20)
+        self.assertEqual(config["retrieval"]["calibration_questions"], 400)
+        self.assertEqual(
+            set(config["models"]),
+            {"vietlegal_harrier", "vietnamese_embedding", "nemotron", "legal_reranker", "qwen3_reranker", "prism_reranker"},
+        )
+        self.assertNotIn("jina", config["models"])
+        self.assertNotIn("vietnamese_reranker", config["models"])
 
     def test_phase2_harrier_notebooks_are_isolated_and_pinned(self):
         directory = ROOT / "kaggle" / "phase2_harrier"

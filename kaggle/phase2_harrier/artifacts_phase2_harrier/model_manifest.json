@@ -1,0 +1,42 @@
+{
+  "models": [
+    {
+      "name": "vietlegal_harrier",
+      "id": "mainguyen9/vietlegal-harrier-0.6b",
+      "parameters": 596049920,
+      "revision": "91a0e1ebe4b63b4475bbae40658b8ca9231bea74",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "vietnamese_embedding",
+      "id": "AITeamVN/Vietnamese_Embedding_v2",
+      "parameters": 567754752,
+      "revision": "18b44161e041bf1d3a333ab5144b5b7b93f914d2",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "nemotron",
+      "id": "nvidia/Nemotron-3-Embed-1B-BF16",
+      "parameters": 1140918272,
+      "revision": "c0c9fea93ea424587517f2c59e20db9f1d6bf615",
+      "license": "OpenMDW-1.1"
+    },
+    {
+      "name": "jina",
+      "id": "jinaai/jina-reranker-v3.5",
+      "parameters": 596836352,
+      "revision": "e8a93f33f0b22108f8c2364f8484ce3422552fbc",
+      "license": "CC-BY-NC-4.0"
+    },
+    {
+      "name": "vietnamese_reranker",
+      "id": "AITeamVN/Vietnamese_Reranker",
+      "parameters": 567755777,
+      "revision": "f536976248403314225d7fdfdbc87f0e9516a54e",
+      "license": "Apache-2.0"
+    }
+  ],
+  "total_parameters": 3469315073,
+  "limit_parameters": 4000000000,
+  "compliant": true
+}

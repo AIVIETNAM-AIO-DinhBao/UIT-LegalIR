@@ -114,7 +114,14 @@ def audit_models(config: dict[str, Any]) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     total = 0
     for name, spec in config["models"].items():
-        loader = AutoModelForSequenceClassification if spec["role"] == "pairwise_reranker" else AutoModel
+        if spec["role"] == "pairwise_reranker":
+            loader = AutoModelForSequenceClassification
+        elif spec.get("scoring") == "causal_yes_no":
+            from transformers import AutoModelForCausalLM
+
+            loader = AutoModelForCausalLM
+        else:
+            loader = AutoModel
         model = loader.from_pretrained(
             model_source(spec),
             trust_remote_code=name == "jina",

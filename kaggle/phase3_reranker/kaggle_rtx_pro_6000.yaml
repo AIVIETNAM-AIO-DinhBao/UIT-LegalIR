@@ -1,0 +1,111 @@
+paths:
+  contexts_dir: selected-contexts
+  train_file: train.json
+  public_file: public-official.json
+  artifacts_dir: artifacts_phase3
+  submission_file: submission_phase3_tuned.json
+
+runtime:
+  seed: 2026
+  device: cuda
+  dtype: bfloat16
+  batch_size: 64
+  num_workers: 4
+
+models:
+  vietlegal_harrier:
+    id: mainguyen9/vietlegal-harrier-0.6b
+    revision: 91a0e1ebe4b63b4475bbae40658b8ca9231bea74
+    local_path: null
+    local_files_only: true
+    role: dense
+    license: Apache-2.0
+    prompt_query: "Instruct: Given a Vietnamese legal question, retrieve relevant legal passages that answer the question\nQuery: "
+    prompt_document: ""
+    chunk_view: short
+  vietnamese_embedding:
+    id: AITeamVN/Vietnamese_Embedding_v2
+    revision: 18b44161e041bf1d3a333ab5144b5b7b93f914d2
+    local_path: null
+    local_files_only: true
+    role: dense
+    license: Apache-2.0
+    prompt_query: ""
+    prompt_document: ""
+    chunk_view: long
+  nemotron:
+    id: nvidia/Nemotron-3-Embed-1B-BF16
+    revision: c0c9fea93ea424587517f2c59e20db9f1d6bf615
+    local_path: null
+    local_files_only: true
+    role: dense
+    license: OpenMDW-1.1
+    prompt_query: "query: "
+    prompt_document: "passage: "
+    chunk_view: long
+  legal_reranker:
+    id: kiencnt2205/vietnamese-legal-reranker-bge-base
+    revision: e6894c39b03a2576972045c4fd3b9a2358eadb72
+    local_path: null
+    local_files_only: true
+    role: pairwise_reranker
+    license: not-recorded
+    max_length: 512
+    evidence_tokens: 440
+  qwen3_reranker:
+    id: Qwen/Qwen3-Reranker-0.6B
+    revision: e61197ed45024b0ed8a2d74b80b4d909f1255473
+    local_path: null
+    local_files_only: true
+    role: causal_reranker
+    scoring: causal_yes_no
+    prompt_style: qwen
+    license: Apache-2.0
+    max_length: 1536
+    evidence_tokens: 1400
+  prism_reranker:
+    id: infgrad/Prism-Qwen3.5-Reranker-0.8B
+    revision: c60729783cb2f0662c0b054a02964402a211e3f4
+    local_path: null
+    local_files_only: true
+    role: causal_reranker
+    scoring: causal_yes_no
+    prompt_style: prism
+    license: MIT
+    max_length: 1536
+    evidence_tokens: 1400
+
+chunking:
+  short_words: 300
+  short_overlap_words: 48
+  long_words: 896
+  long_overlap_words: 128
+
+retrieval:
+  per_channel_top_k: 150
+  chunk_search_k: 1000
+  fused_top_k: 200
+  query_memory_neighbors: 60
+  query_exact_weight: 4.0
+  doc_second_chunk_weight: 0.1
+  first_stage_tuning_questions: 2000
+  calibration_questions: 400
+  coordinate_search_passes: 2
+  rrf_k_values: [20, 40, 60]
+  first_stage_weight_values: [0.0, 0.5, 1.0, 1.5, 2.0]
+
+reranking:
+  rerank_top_k: 20
+  pairwise_max_length: 512
+  pairwise_evidence_tokens: 440
+  pairwise_batch_size: 64
+  causal_batch_size: 16
+  evidence_chunks_per_document: 3
+  calibration_questions: 400
+  final_rrf_k_values: [5, 10, 20, 40]
+  final_reranker_weight_values: [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+  final_first_stage_weight_values: [0.5, 0.75, 1.0, 1.25, 1.5]
+
+validation:
+  folds: 5
+  reranker_tuning_folds: [0]

@@ -68,6 +68,13 @@ def build_retrieval_cache(config: dict[str, Any], split: str, resume: bool) -> d
         return read_json(cache)
     questions = _load_questions(config, split)
     allowed = _train_allowed_questions(questions, config["validation"]["folds"]) if split == "train" else None
+    if split == "train":
+        limit = config["retrieval"].get("calibration_questions")
+        if limit and len(questions) > limit:
+            questions = sorted(
+                questions,
+                key=lambda item: hashlib.sha256(item["qid"].encode("utf-8")).hexdigest(),
+            )[:limit]
     pipeline = RetrievalPipeline(config)
     result = pipeline.retrieve_many(questions, allowed)
     write_json(cache, result)
@@ -153,16 +160,24 @@ def run_reranking(
     questions = _load_questions(config, split)
     if fold is not None:
         assignments = grouped_folds(_load_questions(config, "train"), config["validation"]["folds"])
-        questions = [item for item in questions if assignments[item["qid"]] == fold]
+        questions = [item for item in questions if assignments[item["qid"]] == fold and item["qid"] in fused]
         fused = {item["qid"]: fused[item["qid"]] for item in questions}
-    engines = [engine] if engine else ["vietnamese_reranker", "jina"]
+        calibration_limit = config["reranking"].get("calibration_questions")
+        if split == "train" and calibration_limit and len(questions) > calibration_limit:
+            questions = sorted(
+                questions,
+                key=lambda item: hashlib.sha256(item["qid"].encode("utf-8")).hexdigest(),
+            )[:calibration_limit]
+            fused = {item["qid"]: fused[item["qid"]] for item in questions}
+    configured_engines = [name for name, spec in config["models"].items() if spec["role"].endswith("reranker")]
+    engines = [engine] if engine else configured_engines
     if engine is None:
         existing = {
             name: read_json(artifacts / f"rerank_{split}{suffix}_{name}.json")[name]
-            for name in ("vietnamese_reranker", "jina")
+            for name in configured_engines
             if (artifacts / f"rerank_{split}{suffix}_{name}.json").exists()
         }
-        if len(existing) == 2:
+        if len(existing) == len(configured_engines):
             write_json(destination, existing)
             return existing
     result = rerank_candidates(config, questions, fused, engines=engines)
@@ -180,10 +195,10 @@ def tune_final_stage(config: dict[str, Any], fold: int | None, resume: bool) -> 
     if resume and destination.exists():
         return read_json(destination)
     first_stage = read_json(artifacts / "first_stage_weights.json")
-    retrievals = build_retrieval_cache(config, "train", resume)
-    fused = _fuse_cached(config, retrievals, first_stage["weights"], first_stage["rrf_k"])
     all_questions = _load_questions(config, "train")
     assignments = grouped_folds(all_questions, config["validation"]["folds"])
+    retrievals = build_retrieval_cache(config, "train", resume)
+    fused = _fuse_cached(config, retrievals, first_stage["weights"], first_stage["rrf_k"])
     if fold is None:
         held_out_folds = config["validation"].get(
             "reranker_tuning_folds", list(range(config["validation"]["folds"]))
@@ -191,25 +206,27 @@ def tune_final_stage(config: dict[str, Any], fold: int | None, resume: bool) -> 
         # Rankings remain OOF because query-memory labels from each selected
         # fold are withheld.  The runtime profile may intentionally select a
         # subset of folds for expensive model reranking.
-        questions = [item for item in all_questions if assignments[item["qid"]] in held_out_folds]
-        rerankings: dict[str, dict[str, list[str]]] = {"jina": {}, "vietnamese_reranker": {}}
+        questions = [item for item in all_questions if assignments[item["qid"]] in held_out_folds and item["qid"] in fused]
+        configured_engines = [name for name, spec in config["models"].items() if spec["role"].endswith("reranker")]
+        rerankings: dict[str, dict[str, list[str]]] = {name: {} for name in configured_engines}
         for held_out_fold in held_out_folds:
             per_fold = run_reranking(config, "train", held_out_fold, resume)
             for name in rerankings:
                 rerankings[name].update(per_fold[name])
     else:
         held_out_folds = [fold]
-        questions = [item for item in all_questions if assignments[item["qid"]] == fold]
+        questions = [item for item in all_questions if assignments[item["qid"]] == fold and item["qid"] in fused]
         rerankings = run_reranking(config, "train", fold, resume)
     options = config["reranking"]
+    sample_limit = config["reranking"].get("calibration_questions")
     best: dict[str, Any] | None = None
-    for jina_weight, vi_weight, first_weight, rrf_k in product(
-        options["final_reranker_weight_values"],
-        options["final_reranker_weight_values"],
-        options["final_first_stage_weight_values"],
-        options["final_rrf_k_values"],
-    ):
-        weights = {"jina": jina_weight, "vietnamese_reranker": vi_weight, "first_stage": first_weight}
+    reranker_weight_values = options["final_reranker_weight_values"]
+    channels = list(rerankings)
+    for values in product(*([reranker_weight_values] * len(channels)), options["final_first_stage_weight_values"], options["final_rrf_k_values"]):
+        reranker_values = values[: len(channels)]
+        first_weight, rrf_k = values[-2:]
+        weights = {name: value for name, value in zip(channels, reranker_values)}
+        weights["first_stage"] = first_weight
         predictions = final_predictions(
             {item["qid"]: fused[item["qid"]]["candidates"] for item in questions}, rerankings, weights, rrf_k
         )
@@ -218,7 +235,7 @@ def tune_final_stage(config: dict[str, Any], fold: int | None, resume: bool) -> 
             best = candidate
     assert best is not None
     write_json(destination, best)
-    if fold is None:
+    if fold is None and not sample_limit:
         per_fold_metrics: dict[str, dict[str, float]] = {}
         for held_out_fold in held_out_folds:
             fold_questions = [item for item in all_questions if assignments[item["qid"]] == held_out_fold]
