@@ -46,6 +46,7 @@ class RetrievalPipeline:
         query_vectors: np.ndarray,
         k: int,
         memory: bool = False,
+        batch_size: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Exact IP search on the active GPU, with FAISS CPU as a portable fallback."""
         try:
@@ -59,12 +60,22 @@ class RetrievalPipeline:
                 corpus_tensor = torch.from_numpy(np.asarray(corpus)).to("cuda", dtype=torch.float16)
                 scores: list[np.ndarray] = []
                 indices: list[np.ndarray] = []
-                batch_size = self.config["runtime"]["batch_size"]
-                for start in range(0, len(query_vectors), batch_size):
-                    batch = torch.from_numpy(query_vectors[start : start + batch_size]).to("cuda", dtype=torch.float16)
-                    values, positions = torch.topk(batch @ corpus_tensor.T, k=min(k, len(corpus_tensor)), dim=1)
-                    scores.append(values.float().cpu().numpy())
-                    indices.append(positions.cpu().numpy())
+                query_batch_size = batch_size or self.config["runtime"]["batch_size"]
+                start = 0
+                while start < len(query_vectors):
+                    size = min(query_batch_size, len(query_vectors) - start)
+                    try:
+                        batch = torch.from_numpy(query_vectors[start : start + size]).to("cuda", dtype=torch.float16)
+                        values, positions = torch.topk(batch @ corpus_tensor.T, k=min(k, len(corpus_tensor)), dim=1)
+                        scores.append(values.float().cpu().numpy())
+                        indices.append(positions.cpu().numpy())
+                        start += size
+                    except RuntimeError as error:
+                        if "out of memory" not in str(error).lower() or size == 1:
+                            raise
+                        torch.cuda.empty_cache()
+                        query_batch_size = max(1, size // 2)
+                        print(f"GPU vector search OOM; retrying with batch_size={query_batch_size}")
                 del corpus_tensor
                 torch.cuda.empty_cache()
                 return np.concatenate(scores), np.concatenate(indices)
@@ -133,15 +144,18 @@ class RetrievalPipeline:
                 continue
             index, chunks = self._dense_index(model_name)
             model = load_encoder(spec, self.config["runtime"])
+            query_batch_size = int(self.config["runtime"].get("query_batch_size", self.config["runtime"]["batch_size"]))
             vectors = encode_texts(
                 model,
                 [spec["prompt_query"] + item["question"] for item in questions],
-                self.config["runtime"]["batch_size"],
+                query_batch_size,
                 f"Retrieving {model_name}",
             )
-            scores, indices = self._search_vectors(model_name, index, vectors, options["chunk_search_k"])
+            scores, indices = self._search_vectors(model_name, index, vectors, options["chunk_search_k"], batch_size=query_batch_size)
             neighbour_k = min(len(self.train_questions), max(256, options["query_memory_neighbors"] * 8))
-            memory_values, memory_indices = self._search_vectors(model_name, index, vectors, neighbour_k, memory=True)
+            memory_values, memory_indices = self._search_vectors(
+                model_name, index, vectors, neighbour_k, memory=True, batch_size=query_batch_size
+            )
             for row, item in enumerate(questions):
                 ranking, channel_evidence = self._aggregate_chunks(
                     indices[row], scores[row], chunks, options["per_channel_top_k"], options["doc_second_chunk_weight"]

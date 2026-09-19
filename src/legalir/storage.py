@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -20,8 +21,10 @@ def read_json(path: str | Path) -> Any:
 def write_json(path: str | Path, value: Any) -> None:
     destination = Path(path)
     ensure_dir(destination.parent)
-    with destination.open("w", encoding="utf-8") as handle:
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
         json.dump(value, handle, ensure_ascii=False, indent=2)
+    os.replace(temporary, destination)
 
 
 def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> None:
@@ -45,4 +48,3 @@ def sha256_file(path: str | Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
-

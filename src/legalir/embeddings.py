@@ -41,15 +41,31 @@ def encode_texts(
     description: str,
 ) -> np.ndarray:
     vectors: list[np.ndarray] = []
-    for start in tqdm(range(0, len(texts), batch_size), desc=description):
-        encoded = model.encode(
-            texts[start : start + batch_size],
-            batch_size=batch_size,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )
-        vectors.append(np.asarray(encoded, dtype=np.float32))
+    active_batch_size = batch_size
+    start = 0
+    progress = tqdm(total=len(texts), desc=description)
+    while start < len(texts):
+        size = min(active_batch_size, len(texts) - start)
+        try:
+            encoded = model.encode(
+                texts[start : start + size],
+                batch_size=size,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            )
+            vectors.append(np.asarray(encoded, dtype=np.float32))
+            start += size
+            progress.update(size)
+        except RuntimeError as error:
+            if "out of memory" not in str(error).lower() or size == 1:
+                raise
+            import torch
+
+            torch.cuda.empty_cache()
+            active_batch_size = max(1, size // 2)
+            print(f"{description}: CUDA OOM; retrying with batch_size={active_batch_size}")
+    progress.close()
     return np.concatenate(vectors, axis=0) if vectors else np.empty((0, 0), dtype=np.float32)
 
 

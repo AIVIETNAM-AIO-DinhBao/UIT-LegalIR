@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import math
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ from transformers import AutoModel, AutoModelForCausalLM, AutoModelForSequenceCl
 
 from .fusion import rrf
 from .models import model_load_kwargs, model_source
-from .storage import read_jsonl
+from .storage import read_json, read_jsonl, write_json
 
 
 class EvidenceStore:
@@ -51,17 +52,51 @@ class PairwiseReranker:
             dtype=torch.float16 if self.device.startswith("cuda") else torch.float32,
             **load_kwargs,
         ).to(self.device).eval()
+        self.batch_size = int(config["reranking"]["pairwise_batch_size"])
 
     @torch.inference_mode()
-    def rank(self, query: str, documents: list[str]) -> list[int]:
-        batch_size = self.config["reranking"]["pairwise_batch_size"]
+    def _score_pairs(self, pairs: list[list[str]]) -> list[float]:
+        batch_size = self.batch_size
         maximum = self.config["reranking"]["pairwise_max_length"]
         scores: list[float] = []
-        for start in range(0, len(documents), batch_size):
-            pairs = [[query, document] for document in documents[start : start + batch_size]]
-            inputs = self.tokenizer(pairs, padding=True, truncation=True, max_length=maximum, return_tensors="pt").to(self.device)
-            scores.extend(self.model(**inputs, return_dict=True).logits.view(-1).float().cpu().tolist())
-        return sorted(range(len(documents)), key=lambda index: (-scores[index], index))
+        start = 0
+        while start < len(pairs):
+            size = min(batch_size, len(pairs) - start)
+            try:
+                inputs = self.tokenizer(
+                    pairs[start : start + size],
+                    padding=True,
+                    truncation=True,
+                    max_length=maximum,
+                    return_tensors="pt",
+                ).to(self.device)
+                scores.extend(self.model(**inputs, return_dict=True).logits.view(-1).float().cpu().tolist())
+                start += size
+            except (torch.OutOfMemoryError, RuntimeError) as error:
+                if "out of memory" not in str(error).lower() or size == 1:
+                    raise
+                torch.cuda.empty_cache()
+                batch_size = max(1, size // 2)
+                self.batch_size = batch_size
+                print(f"Pairwise reranker OOM; retrying with batch_size={batch_size}")
+        return scores
+
+    @torch.inference_mode()
+    def rank_many(self, items: list[tuple[str, list[str]]]) -> list[list[int]]:
+        """Rank several queries in shared GPU batches while preserving each query's ranking."""
+        positions: list[tuple[int, int]] = []
+        pairs: list[list[str]] = []
+        for item_index, (query, documents) in enumerate(items):
+            for document_index, document in enumerate(documents):
+                positions.append((item_index, document_index))
+                pairs.append([query, document])
+        per_item = [[0.0] * len(documents) for _, documents in items]
+        for (item_index, document_index), score in zip(positions, self._score_pairs(pairs), strict=True):
+            per_item[item_index][document_index] = score
+        return [sorted(range(len(scores)), key=lambda index: (-scores[index], index)) for scores in per_item]
+
+    def rank(self, query: str, documents: list[str]) -> list[int]:
+        return self.rank_many([(query, documents)])[0]
 
     def close(self) -> None:
         del self.model
@@ -100,6 +135,7 @@ class CausalYesNoReranker:
         self.yes_id = self.tokenizer("yes", add_special_tokens=False).input_ids[0]
         self.no_id = self.tokenizer("no", add_special_tokens=False).input_ids[0]
         self.maximum = int(spec.get("max_length", config["reranking"].get("causal_max_length", 1536)))
+        self.batch_size = int(config["reranking"].get(f"{self.model_name}_batch_size", config["reranking"].get("causal_batch_size", 16)))
 
     def _prompt(self, query: str, document: str) -> str:
         style = self.spec.get("prompt_style", "qwen")
@@ -125,22 +161,48 @@ class CausalYesNoReranker:
         )
 
     @torch.inference_mode()
-    def rank(self, query: str, documents: list[str]) -> list[int]:
-        batch_size = int(self.config["reranking"].get(f"{self.model_name}_batch_size", self.config["reranking"].get("causal_batch_size", 16)))
+    def _score_prompts(self, prompts: list[str]) -> list[float]:
+        batch_size = self.batch_size
         scores: list[float] = []
-        prompts = [self._prompt(query, document) for document in documents]
-        for start in range(0, len(prompts), batch_size):
-            inputs = self.tokenizer(
-                prompts[start : start + batch_size],
-                padding=True,
-                truncation=True,
-                max_length=self.maximum,
-                return_tensors="pt",
-            ).to(self.device)
-            logits = self.model(**inputs, return_dict=True).logits[:, -1, :]
-            pair = torch.stack([logits[:, self.no_id], logits[:, self.yes_id]], dim=1)
-            scores.extend(torch.softmax(pair.float(), dim=1)[:, 1].cpu().tolist())
-        return sorted(range(len(documents)), key=lambda index: (-scores[index], index))
+        start = 0
+        while start < len(prompts):
+            size = min(batch_size, len(prompts) - start)
+            try:
+                inputs = self.tokenizer(
+                    prompts[start : start + size],
+                    padding=True,
+                    truncation=True,
+                    max_length=self.maximum,
+                    return_tensors="pt",
+                ).to(self.device)
+                logits = self.model(**inputs, return_dict=True).logits[:, -1, :]
+                pair = torch.stack([logits[:, self.no_id], logits[:, self.yes_id]], dim=1)
+                scores.extend(torch.softmax(pair.float(), dim=1)[:, 1].cpu().tolist())
+                start += size
+            except (torch.OutOfMemoryError, RuntimeError) as error:
+                if "out of memory" not in str(error).lower() or size == 1:
+                    raise
+                torch.cuda.empty_cache()
+                batch_size = max(1, size // 2)
+                self.batch_size = batch_size
+                print(f"Causal reranker OOM; retrying with batch_size={batch_size}")
+        return scores
+
+    @torch.inference_mode()
+    def rank_many(self, items: list[tuple[str, list[str]]]) -> list[list[int]]:
+        positions: list[tuple[int, int]] = []
+        prompts: list[str] = []
+        for item_index, (query, documents) in enumerate(items):
+            for document_index, document in enumerate(documents):
+                positions.append((item_index, document_index))
+                prompts.append(self._prompt(query, document))
+        per_item = [[0.0] * len(documents) for _, documents in items]
+        for (item_index, document_index), score in zip(positions, self._score_prompts(prompts), strict=True):
+            per_item[item_index][document_index] = score
+        return [sorted(range(len(scores)), key=lambda index: (-scores[index], index)) for scores in per_item]
+
+    def rank(self, query: str, documents: list[str]) -> list[int]:
+        return self.rank_many([(query, documents)])[0]
 
     def close(self) -> None:
         del self.model
@@ -180,6 +242,11 @@ class JinaListwiseReranker:
             torch.cuda.empty_cache()
             return self._rank_windows(query, documents, 10)
 
+    def rank_many(self, items: list[tuple[str, list[str]]]) -> list[list[int]]:
+        # Jina's remote-code API is listwise for one query; preserve its
+        # original windows and only use outer batching for checkpoint cadence.
+        return [self.rank(query, documents) for query, documents in items]
+
     def _rank_windows(self, query: str, documents: list[str], window: int) -> list[int]:
         # Round-robin windows make every window contain candidates from different first-stage ranks.
         buckets = [[] for _ in range(max(1, (len(documents) + window - 1) // window))]
@@ -215,11 +282,14 @@ def rerank_candidates(
     questions: list[dict[str, Any]],
     fused: dict[str, dict[str, Any]],
     engines: list[str] | None = None,
+    progress_paths: dict[str, Path] | None = None,
 ) -> dict[str, dict[str, list[str]]]:
     """Run configured rerankers locally and return cacheable document rankings."""
     store = EvidenceStore(config["paths"]["artifacts_dir"])
     configured = [name for name, spec in config["models"].items() if spec["role"].endswith("reranker")]
     engines = engines or configured
+    query_batch_size = max(1, int(config["reranking"].get("query_batch_size", 1)))
+    checkpoint_every = max(1, int(config["reranking"].get("checkpoint_every_questions", query_batch_size)))
     result: dict[str, dict[str, list[str]]] = {}
     for engine in engines:
         if engine not in config["models"] or not config["models"][engine]["role"].endswith("reranker"):
@@ -231,21 +301,42 @@ def rerank_candidates(
             reranker = CausalYesNoReranker(config, engine)
         else:
             reranker = PairwiseReranker(config, engine)
+        evidence_limit = int(spec.get("evidence_tokens", config["reranking"].get("pairwise_evidence_tokens", 1400)))
+
+        @lru_cache(maxsize=20_000)
+        def prepared_document(document_id: str, preferred_chunks: tuple[str, ...]) -> str:
+            return truncate_to_tokens(
+                store.evidence(document_id, list(preferred_chunks)),
+                reranker.tokenizer,
+                evidence_limit,
+            )
+
+        progress_path = (progress_paths or {}).get(engine)
         rankings: dict[str, list[str]] = {}
-        for item in questions:
-            candidate = fused[item["qid"]]
-            candidate_ids = candidate["candidates"][: config["reranking"]["rerank_top_k"]]
-            evidence_limit = int(spec.get("evidence_tokens", config["reranking"].get("pairwise_evidence_tokens", 1400)))
-            documents = [
-                truncate_to_tokens(
-                    store.evidence(doc_id, candidate["evidence"].get(doc_id, [])),
-                    reranker.tokenizer,
-                    evidence_limit,
-                )
-                for doc_id in candidate_ids
-            ]
-            order = reranker.rank(item["question"], documents)
-            rankings[item["qid"]] = [candidate_ids[index] for index in order]
+        if progress_path and progress_path.is_file():
+            saved = read_json(progress_path).get(engine, {})
+            if not isinstance(saved, dict):
+                raise RuntimeError(f"Invalid reranker progress file: {progress_path}")
+            rankings = {qid: value for qid, value in saved.items() if qid in fused}
+            print(f"Resuming {engine}: {len(rankings)}/{len(questions)} questions complete")
+        pending = [item for item in questions if item["qid"] not in rankings]
+        for start in range(0, len(pending), query_batch_size):
+            batch = pending[start : start + query_batch_size]
+            candidates: list[list[str]] = []
+            rank_inputs: list[tuple[str, list[str]]] = []
+            for item in batch:
+                candidate = fused[item["qid"]]
+                candidate_ids = candidate["candidates"][: config["reranking"]["rerank_top_k"]]
+                documents = [
+                    prepared_document(doc_id, tuple(candidate["evidence"].get(doc_id, [])))
+                    for doc_id in candidate_ids
+                ]
+                candidates.append(candidate_ids)
+                rank_inputs.append((item["question"], documents))
+            for item, candidate_ids, order in zip(batch, candidates, reranker.rank_many(rank_inputs), strict=True):
+                rankings[item["qid"]] = [candidate_ids[index] for index in order]
+            if progress_path and (len(rankings) % checkpoint_every == 0 or start + len(batch) == len(pending)):
+                write_json(progress_path, {engine: rankings})
         reranker.close()
         result[engine] = rankings
     return result

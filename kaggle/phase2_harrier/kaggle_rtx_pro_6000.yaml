@@ -10,6 +10,7 @@ runtime:
   device: cuda
   dtype: bfloat16
   batch_size: 64
+  query_batch_size: 256
   num_workers: 4
 
 models:
@@ -80,7 +81,9 @@ reranking:
   rerank_top_k: 80
   pairwise_max_length: 1536
   pairwise_evidence_tokens: 1400
-  pairwise_batch_size: 32
+  pairwise_batch_size: 64
+  query_batch_size: 8
+  checkpoint_every_questions: 32
   jina_window_size: 20
   jina_evidence_tokens: 384
   jina_final_top_k: 30

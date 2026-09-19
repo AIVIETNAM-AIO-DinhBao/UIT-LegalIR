@@ -10,6 +10,7 @@ runtime:
   device: cuda
   dtype: bfloat16
   batch_size: 64
+  query_batch_size: 256
   num_workers: 4
 
 models:
@@ -99,7 +100,9 @@ reranking:
   pairwise_max_length: 512
   pairwise_evidence_tokens: 440
   pairwise_batch_size: 64
-  causal_batch_size: 16
+  causal_batch_size: 64
+  query_batch_size: 32
+  checkpoint_every_questions: 64
   evidence_chunks_per_document: 3
   calibration_questions: 400
   final_rrf_k_values: [5, 10, 20, 40]

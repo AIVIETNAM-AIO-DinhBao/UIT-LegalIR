@@ -152,7 +152,7 @@ def run_reranking(
     artifacts = Path(config["paths"]["artifacts_dir"])
     suffix = f"_{fold}" if fold is not None else ""
     destination = artifacts / f"rerank_{split}{suffix}.json"
-    if resume and destination.exists():
+    if engine is None and resume and destination.exists():
         return read_json(destination)
     first_stage = read_json(artifacts / "first_stage_weights.json")
     retrievals = build_retrieval_cache(config, split, resume)
@@ -171,20 +171,29 @@ def run_reranking(
             fused = {item["qid"]: fused[item["qid"]] for item in questions}
     configured_engines = [name for name, spec in config["models"].items() if spec["role"].endswith("reranker")]
     engines = [engine] if engine else configured_engines
+    completed: dict[str, dict[str, list[str]]] = {}
+    if engine is not None:
+        engine_destination = artifacts / f"rerank_{split}{suffix}_{engine}.json"
+        if resume and engine_destination.exists():
+            return {engine: read_json(engine_destination)[engine]}
     if engine is None:
-        existing = {
+        completed = {
             name: read_json(artifacts / f"rerank_{split}{suffix}_{name}.json")[name]
             for name in configured_engines
             if (artifacts / f"rerank_{split}{suffix}_{name}.json").exists()
         }
-        if len(existing) == len(configured_engines):
-            write_json(destination, existing)
-            return existing
-    result = rerank_candidates(config, questions, fused, engines=engines)
+        if len(completed) == len(configured_engines):
+            write_json(destination, completed)
+            return completed
+        engines = [name for name in engines if name not in completed]
+    progress_paths = {name: artifacts / f"rerank_{split}{suffix}_{name}.progress.json" for name in engines}
+    result = rerank_candidates(config, questions, fused, engines=engines, progress_paths=progress_paths)
     for name, rankings in result.items():
         write_json(artifacts / f"rerank_{split}{suffix}_{name}.json", {name: rankings})
+        progress_paths[name].unlink(missing_ok=True)
     if engine is not None:
         return result
+    result = {**completed, **result}
     write_json(destination, result)
     return result
 
