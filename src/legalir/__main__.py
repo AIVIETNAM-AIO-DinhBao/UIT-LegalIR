@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import load_config, resolve_paths
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Offline UIT DSC 2026 LegalIR pipeline")
     parser.add_argument("command", choices=["prepare", "audit", "index", "retrieve", "tune", "rerank", "predict"])
     parser.add_argument("--config", required=True)
@@ -18,8 +18,15 @@ def main() -> int:
     parser.add_argument("--output")
     parser.add_argument("--model", help="Dense model key from the selected configuration")
     parser.add_argument("--lexical-only", action="store_true")
-    parser.add_argument("--engine", choices=["jina", "vietnamese_reranker"])
-    args = parser.parse_args()
+    # Reranker names are configuration keys.  Keeping a hard-coded list here
+    # made the Phase 3 engines impossible to invoke.  run_reranking validates
+    # that the requested key exists and has a reranker role.
+    parser.add_argument("--engine")
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
     # Keep `python -m legalir --help` and lightweight source checks usable on a
     # machine that has not installed the Kaggle/GPU dependency set yet.
     from .pipeline import audit_models, index, predict, prepare, run_reranking, tune_final_stage, tune_first_stage

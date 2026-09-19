@@ -27,6 +27,24 @@ def load_questions(path: str | Path) -> list[dict[str, Any]]:
     ]
 
 
+def _question_fingerprint(questions: list[dict[str, Any]]) -> str:
+    payload = json.dumps(questions, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _write_questions(paths: dict[str, Any], train_path: Path, public_path: Path) -> dict[str, Any]:
+    train_questions = load_questions(paths["train_file"])
+    public_questions = load_questions(paths["public_file"])
+    write_jsonl(train_path, train_questions)
+    write_jsonl(public_path, public_questions)
+    return {
+        "train_questions": len(train_questions),
+        "public_questions": len(public_questions),
+        "train_questions_fingerprint": _question_fingerprint(train_questions),
+        "public_questions_fingerprint": _question_fingerprint(public_questions),
+    }
+
+
 def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]:
     paths = config["paths"]
     artifacts = ensure_dir(paths["artifacts_dir"])
@@ -39,7 +57,7 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
     chunking_fingerprint = hashlib.sha256(
         json.dumps(config["chunking"], ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
-    if resume and all(path.exists() for path in (corpus_path, short_path, long_path, train_path, public_path, manifest_path)):
+    if resume and all(path.exists() for path in (corpus_path, short_path, long_path, manifest_path)):
         manifest = read_json(manifest_path)
         if (
             manifest.get("schema_version") == 2
@@ -48,6 +66,11 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
             and manifest.get("short_chunks", 0) > 0
             and manifest.get("long_chunks", 0) > 0
         ):
+            # Question files are cheap to refresh and may point at a different
+            # inference set (for example private-official.json).  Corpus and
+            # dense indexes remain reusable across that switch.
+            manifest.update(_write_questions(paths, train_path, public_path))
+            write_json(manifest_path, manifest)
             return manifest
 
     contexts_dir = Path(paths["contexts_dir"])
@@ -88,16 +111,13 @@ def build_corpus(config: dict[str, Any], resume: bool = False) -> dict[str, int]
     write_jsonl(corpus_path, corpus_rows)
     write_jsonl(short_path, short_rows)
     write_jsonl(long_path, long_rows)
-    write_jsonl(train_path, load_questions(paths["train_file"]))
-    write_jsonl(public_path, load_questions(paths["public_file"]))
     manifest = {
         "schema_version": 2,
         "chunking_fingerprint": chunking_fingerprint,
         "documents": len(corpus_rows),
         "short_chunks": len(short_rows),
         "long_chunks": len(long_rows),
-        "train_questions": len(load_questions(paths["train_file"])),
-        "public_questions": len(load_questions(paths["public_file"])),
     }
+    manifest.update(_write_questions(paths, train_path, public_path))
     write_json(manifest_path, manifest)
     return manifest

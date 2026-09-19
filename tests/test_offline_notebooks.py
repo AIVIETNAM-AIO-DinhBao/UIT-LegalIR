@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from legalir.__main__ import build_parser
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,6 +16,24 @@ def code_source(notebook: Path) -> str:
 
 
 class OfflineNotebookTests(unittest.TestCase):
+    def test_cli_accepts_configured_phase3_reranker_names(self):
+        parser = build_parser()
+        for engine in ("legal_reranker", "qwen3_reranker", "prism_reranker"):
+            args = parser.parse_args(["rerank", "--config", "phase3.yaml", "--engine", engine])
+            self.assertEqual(args.engine, engine)
+
+    def test_private_runtime_switch_and_cache_guard_exist_in_both_phases(self):
+        for directory in ("phase2_harrier", "phase3_reranker"):
+            runtime = code_source(ROOT / "kaggle" / directory / "legalir_rtx_pro_6000_offline.ipynb")
+            self.assertIn("TEST_FILENAME = 'private-official.json'", runtime)
+            self.assertIn("config['paths']['public_file'] = TEST_FILENAME", runtime)
+            self.assertIn("test_fingerprint", runtime)
+            self.assertIn("config_fingerprint", runtime)
+            self.assertIn("CHECKPOINT_ARTIFACTS_DIR", runtime)
+            self.assertIn("rerank_public*.json", runtime)
+
+        self.assertFalse((ROOT / "kaggle" / "phase3_harrier_f2llm").exists())
+
     def test_builder_pins_snapshots_without_mutating_kaggle_runtime(self):
         source = code_source(ROOT / "kaggle" / "phase1" / "build_offline_bundle.ipynb")
         self.assertIn("snapshot_download(", source)
@@ -110,7 +130,7 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertNotIn("'pip', 'install'", builder)
 
         self.assertIn("HF_HUB_OFFLINE'] = '1'", runtime)
-        self.assertIn("legalir-phase2-harrier-run", runtime)
+        self.assertIn("legalir-phase2-{TEST_LABEL}-harrier-run", runtime)
         self.assertIn("phase2-vietlegal-harrier-0.6b", runtime)
         self.assertIn("dense_models =", runtime)
         self.assertNotIn("git clone", runtime)

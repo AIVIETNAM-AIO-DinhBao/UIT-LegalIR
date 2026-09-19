@@ -18,10 +18,18 @@ on 400 deterministic training questions.
 3. Attach the competition-data Dataset, the existing Phase 2 Harrier bundle
    Dataset, and the new Phase 3 delta Dataset to
    `legalir_rtx_pro_6000_offline.ipynb`.
-4. Replace the three `REPLACE_WITH_*_SLUG` values in the first runtime cell.
-5. Select RTX Pro 6000 and set Internet to Off.
-6. Run all cells. The final upload is
-   `/kaggle/working/legalir-phase3-run/submission_phase3_tuned.zip`.
+4. Replace the `REPLACE_WITH_*_SLUG` values in the first runtime cell. Ensure
+   the attached competition-data dataset also contains `private-official.json`.
+5. Leave `TEST_FILENAME = 'private-official.json'` to run private inference, or
+   change it to `public-official.json` for public inference.
+6. Select RTX Pro 6000 and set Internet to Off.
+7. Run all cells. Private inference writes
+   `/kaggle/working/legalir-phase3-private-run/submission_phase3_private_tuned.zip`;
+   public inference uses the corresponding `..._public_...` filename. This is
+   inference-only: the private labels/Recall are not available in the notebook.
 
 The Phase 2 bundle supplies only the three dense retrievers used by Phase 3;
 the old Jina and Vietnamese reranker snapshots are not configured or loaded.
+
+For private input switching, cache invalidation, and optional reuse of a saved
+Phase 2/3 artifacts checkpoint, see `../PRIVATE_TEST.md`.
