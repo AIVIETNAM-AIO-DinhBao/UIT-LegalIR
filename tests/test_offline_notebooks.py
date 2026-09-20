@@ -32,6 +32,12 @@ class OfflineNotebookTests(unittest.TestCase):
             self.assertIn("CHECKPOINT_ARTIFACTS_DIR", runtime)
             self.assertIn("rerank_public*.json", runtime)
 
+        phase2_runtime = code_source(ROOT / "kaggle" / "phase2_harrier" / "legalir_rtx_pro_6000_offline.ipynb")
+        self.assertIn("def seed_inference_checkpoint", phase2_runtime)
+        self.assertIn("saved_state != expected_state", phase2_runtime)
+        self.assertIn("Will build dense index", phase2_runtime)
+        self.assertIn("compatible completed stages", phase2_runtime)
+
         self.assertFalse((ROOT / "kaggle" / "phase3_harrier_f2llm").exists())
 
     def test_builder_pins_snapshots_without_mutating_kaggle_runtime(self):
