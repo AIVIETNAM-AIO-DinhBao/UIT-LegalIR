@@ -111,6 +111,9 @@ class OfflineNotebookTests(unittest.TestCase):
         self.assertIn("legal_reranker", runtime)
         self.assertIn("qwen3_reranker", runtime)
         self.assertIn("prism_reranker", runtime)
+        self.assertIn("Reusable dense indexes:", runtime)
+        self.assertIn("Dense indexes to rebuild:", runtime)
+        self.assertIn("compatible completed retrieval artifacts", runtime)
         self.assertNotIn("huggingface.co", runtime)
         self.assertNotIn("git clone", runtime)
 
