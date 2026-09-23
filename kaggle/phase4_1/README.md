@@ -7,3 +7,11 @@ The notebook never invokes retrieval/reranking, model downloads, corpus preparat
 The only unconditional output is `/kaggle/working/legalir-phase41-private/phase41_report.json`. A Phase 4.1 JSON and ZIP are created in the same directory **only** if OOF Recall exceeds the reproduced Phase 4 OOF, no inner fold declines, and at least one private answer set differs from Phase 4. Otherwise keep Phase 4; do not spend the last submission attempt. Passing this gate does **not** guarantee improvement on private labels.
 
 To regenerate the notebook after modifying its embedded Python files, run `python kaggle/phase4_1/build_notebook.py` from the repository root.
+
+## Separate alternative after the failed ensemble
+
+The three-logistic ensemble above failed its OOF gate (0.949380 vs Phase 4's 0.949752). Do **not** submit its output. For exactly one separate cache-only CPU trial, run `legalir_phase41_consensus_cache_only.ipynb` with the **same four attached datasets** and Internet Off. This does not alter the ensemble notebook or saved Phase 4 output.
+
+The fixed consensus rule starts with Phase 4 top five and makes **at most one** swap per question: an outsider must rank in Legal BGE top 5 and Jina or Vietnamese reranker top 10; Phase 4's lowest-scored selected document must rank outside Legal BGE top 10 and outside both other top 10s; the outsider's within-question standardized Phase 4 score must be at most 0.25 below that weakest document. Among eligible outsiders, choose the highest Phase 4 score, with document ID as deterministic tie-breaker. No thresholds are tuned on OOF or private.
+
+The consensus notebook contains the Phase 4 helper functions and the entire consensus experiment as executable cells: it neither requires nor writes an external experiment `.py`. Attach the same four datasets as above; its only runtime Python dependency from an attached artifact is the project's offline wheel. Check `/kaggle/working/legalir-phase41-consensus-private/phase41_consensus_report.json`. Only if `approved: true` (strict OOF Recall gain, no declining inner fold, and changed private answer sets) will `submission_phase41_private_consensus.zip` be created. This gate does **not** guarantee private Recall improvement or reaching 0.95. Keep the Phase 4 submission otherwise. Edit the notebook directly to change this experiment.
