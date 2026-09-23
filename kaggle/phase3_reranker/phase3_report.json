@@ -1,0 +1,79 @@
+{
+  "experiment_id": "phase3-rerankers-harrier-retrieval",
+  "test_file": "private-official.json",
+  "test_questions": 2080,
+  "test_sha256": "9da4e0cb84204fed924251c35744c93879556e67a440332015ea3b62f3c355bc",
+  "evaluation": "inference_only; labels and Recall not evaluated",
+  "project_commit": "944a51093314e299aa1f6855f0fdb8b9d2c293db",
+  "models": [
+    {
+      "name": "vietlegal_harrier",
+      "id": "mainguyen9/vietlegal-harrier-0.6b",
+      "parameters": 596049920,
+      "revision": "91a0e1ebe4b63b4475bbae40658b8ca9231bea74",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "vietnamese_embedding",
+      "id": "AITeamVN/Vietnamese_Embedding_v2",
+      "parameters": 567754752,
+      "revision": "18b44161e041bf1d3a333ab5144b5b7b93f914d2",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "nemotron",
+      "id": "nvidia/Nemotron-3-Embed-1B-BF16",
+      "parameters": 1140918272,
+      "revision": "c0c9fea93ea424587517f2c59e20db9f1d6bf615",
+      "license": "OpenMDW-1.1"
+    },
+    {
+      "name": "legal_reranker",
+      "id": "kiencnt2205/vietnamese-legal-reranker-bge-base",
+      "parameters": 278044417,
+      "revision": "e6894c39b03a2576972045c4fd3b9a2358eadb72",
+      "license": "not-recorded"
+    },
+    {
+      "name": "qwen3_reranker",
+      "id": "Qwen/Qwen3-Reranker-0.6B",
+      "parameters": 595776512,
+      "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "prism_reranker",
+      "id": "infgrad/Prism-Qwen3.5-Reranker-0.8B",
+      "parameters": 752393024,
+      "revision": "c60729783cb2f0662c0b054a02964402a211e3f4",
+      "license": "MIT"
+    }
+  ],
+  "total_parameters": 3930936897,
+  "first_stage": {
+    "weights": {
+      "bm25": 0.0,
+      "accent_char": 0.5,
+      "vietlegal_harrier": 2.0,
+      "vietnamese_embedding": 1.0,
+      "nemotron": 2.0,
+      "query_memory": 1.0,
+      "query_exact": 4.0
+    },
+    "rrf_k": 20
+  },
+  "final_stage": {
+    "weights": {
+      "legal_reranker": 0.75,
+      "qwen3_reranker": 0.25,
+      "prism_reranker": 0.0,
+      "first_stage": 1.0
+    },
+    "rrf_k": 40,
+    "metrics": {
+      "recall": 0.9691358024691358,
+      "precision": 0.20987654320987653
+    }
+  },
+  "submission": "/kaggle/working/legalir-phase3-private-run/submission_phase3_private_tuned.zip"
+}

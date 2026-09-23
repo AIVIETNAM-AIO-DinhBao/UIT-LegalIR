@@ -15,6 +15,16 @@ def code_source(notebook: Path) -> str:
     return "\n".join("".join(cell["source"]) for cell in content["cells"] if cell["cell_type"] == "code")
 
 
+def runtime_notebook(directory: Path) -> Path:
+    canonical = directory / "legalir_rtx_pro_6000_offline.ipynb"
+    if canonical.is_file():
+        return canonical
+    downloaded = sorted(directory.glob("phase*-legalir-rtx-pro-6000-offline.ipynb"))
+    if len(downloaded) != 1:
+        raise FileNotFoundError(f"Expected one runtime notebook in {directory}, found {downloaded}")
+    return downloaded[0]
+
+
 class OfflineNotebookTests(unittest.TestCase):
     def test_cli_accepts_configured_phase3_reranker_names(self):
         parser = build_parser()
@@ -24,7 +34,7 @@ class OfflineNotebookTests(unittest.TestCase):
 
     def test_private_runtime_switch_and_cache_guard_exist_in_both_phases(self):
         for directory in ("phase2_harrier", "phase3_reranker"):
-            runtime = code_source(ROOT / "kaggle" / directory / "legalir_rtx_pro_6000_offline.ipynb")
+            runtime = code_source(runtime_notebook(ROOT / "kaggle" / directory))
             self.assertIn("TEST_FILENAME = 'private-official.json'", runtime)
             self.assertIn("config['paths']['public_file'] = TEST_FILENAME", runtime)
             self.assertIn("test_fingerprint", runtime)
@@ -32,7 +42,7 @@ class OfflineNotebookTests(unittest.TestCase):
             self.assertIn("CHECKPOINT_ARTIFACTS_DIR", runtime)
             self.assertIn("rerank_public*.json", runtime)
 
-        phase2_runtime = code_source(ROOT / "kaggle" / "phase2_harrier" / "legalir_rtx_pro_6000_offline.ipynb")
+        phase2_runtime = code_source(runtime_notebook(ROOT / "kaggle" / "phase2_harrier"))
         self.assertIn("def seed_inference_checkpoint", phase2_runtime)
         self.assertIn("saved_state != expected_state", phase2_runtime)
         self.assertIn("Will build dense index", phase2_runtime)
@@ -95,7 +105,7 @@ class OfflineNotebookTests(unittest.TestCase):
     def test_phase3_bundle_and_runtime_are_pinned_and_offline(self):
         directory = ROOT / "kaggle" / "phase3_reranker"
         builder = code_source(directory / "build_reranker_bundle.ipynb")
-        runtime = code_source(directory / "legalir_rtx_pro_6000_offline.ipynb")
+        runtime = code_source(runtime_notebook(directory))
         config = yaml.safe_load((directory / "kaggle_rtx_pro_6000.yaml").read_text(encoding="utf-8"))
 
         self.assertIn("phase3-rerankers-harrier-retrieval", builder)
@@ -129,7 +139,7 @@ class OfflineNotebookTests(unittest.TestCase):
     def test_phase2_harrier_notebooks_are_isolated_and_pinned(self):
         directory = ROOT / "kaggle" / "phase2_harrier"
         builder = code_source(directory / "build_offline_bundle.ipynb")
-        runtime = code_source(directory / "legalir_rtx_pro_6000_offline.ipynb")
+        runtime = code_source(runtime_notebook(directory))
         config = yaml.safe_load((directory / "kaggle_rtx_pro_6000.yaml").read_text(encoding="utf-8"))
 
         self.assertIn("legalir-phase2-harrier-bundle", builder)
