@@ -27,6 +27,53 @@ class ConsensusTests(unittest.TestCase):
     def setUpClass(cls):
         cls.experiment = load_experiment()
 
+    def test_pairwise_weights_and_real_oof_training(self):
+        e = self.experiment
+        x = np.array([[2.], [0.], [-1.], [3.], [1.], [0.]])
+        y = np.array([1, 0, 0, 1, 1, 0])
+        meta = [('a', str(i)) for i in range(3)] + [('b', str(i)) for i in range(3)]
+        pairs, labels, weights = e.pairwise_rows(x, y, meta, {'a': 1, 'b': 4})
+        np.testing.assert_allclose(pairs[:4], -pairs[4:])
+        np.testing.assert_array_equal(labels, [1] * 4 + [0] * 4)
+        self.assertAlmostEqual(weights[:2].sum() * 2, 1.0)
+        self.assertAlmostEqual(weights[2:4].sum() * 2, 0.5)
+        groups = np.repeat(np.arange(5), 3)
+        features = np.tile([[2.], [0.], [-1.]], (5, 1))
+        targets = np.tile([1, 0, 0], 5)
+        metadata = [(f'q{i}', str(j)) for i in range(5) for j in range(3)]
+        gold = {f'q{i}': 1 for i in range(5)}
+        seen = []
+        original = e.pairwise_rows
+
+        def capture(features, labels, meta, counts):
+            seen.append(set(counts))
+            return original(features, labels, meta, counts)
+
+        with patch.object(e, 'pairwise_rows', side_effect=capture):
+            scores, stats = e.pairwise_oof_scores(features, targets, groups, metadata, gold)
+        for fold in range(5):
+            self.assertNotIn(f'q{fold}', seen[fold])
+            self.assertEqual(len(seen[fold]), 4)
+            self.assertGreater(scores[3 * fold], scores[3 * fold + 1])
+            self.assertEqual(stats[str(fold)]['directed_pairs'], 16)
+        # Changing held-out labels/gold count must not change that fold's scores.
+        altered = targets.copy()
+        altered[:3] = [0, 1, 0]
+        changed, _ = e.pairwise_oof_scores(features, altered, groups, metadata, dict(gold, q0=2))
+        np.testing.assert_allclose(scores[:3], changed[:3])
+
+    def test_pairwise_multi_swap_diagnostic_and_report_only(self):
+        questions = [{'qid': 'q', 'question': 'example', 'answers': ['f', 'g']}]
+        result = self.experiment.compare_pairwise(
+            questions, {'q': list('abcde')}, {'q': list('abcfg')})
+        self.assertEqual(result['outcomes'], {'improved': 1, 'harmed': 0, 'unchanged': 0})
+        self.assertEqual(result['changes'][0]['rescued_answers'], ['f', 'g'])
+        self.assertEqual(result['changes'][0]['recall_delta'], 1.0)
+        notebook = json.loads(NOTEBOOK.read_text(encoding='utf-8'))
+        source = ''.join(notebook['cells'][4]['source'])
+        self.assertIn("'approved': False, 'submission': None", source)
+        self.assertNotIn('ZipFile(', source)
+
     def test_fixed_rule_swaps_at_most_once_and_never_uses_labels(self):
         docs = [f"d{i:02d}" for i in range(1, 81)]
         original = docs[:5]
